@@ -25,6 +25,8 @@ jobs:
         run: python tools/test_business_logic.py
       - name: Test task action policy
         run: python tools/test_action_policy.py
+      - name: Test semantic task editing
+        run: python tools/test_task_units.py
       - name: Test LLM command contract
         run: python tools/test_llm_bridge_logic.py
       - name: Test voice core

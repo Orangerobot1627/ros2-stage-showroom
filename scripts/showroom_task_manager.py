@@ -16,6 +16,11 @@ from showroom_action_policy import (
     OverrideLeaseBook,
 )
 from showroom_business_logic import BusinessLogic
+from showroom_task_units import (
+    TaskUnitCatalog,
+    TaskUnitError,
+    TaskUnitTracker,
+)
 from std_msgs.msg import String
 
 
@@ -33,6 +38,8 @@ class ShowroomTaskManager(Node):
         self.declare_parameter('auto_start', True)
         self.declare_parameter('auto_start_delay_sec', 3.0)
         self.declare_parameter('action_policy_file', '')
+        self.declare_parameter('task_units_file', '')
+        self.declare_parameter('routes_file', '')
         self.declare_parameter('override_timeout_sec', 0.0)
 
         policy_file = str(self.get_parameter('action_policy_file').value)
@@ -51,6 +58,17 @@ class ShowroomTaskManager(Node):
         self.logic = BusinessLogic(
             self.get_parameter('coffee_trigger').value,
             default_routes=self.action_policy.default_routes)
+        package_share = Path(get_package_share_directory('demo_stage'))
+        configured_tasks = str(self.get_parameter('task_units_file').value)
+        configured_routes = str(self.get_parameter('routes_file').value)
+        task_path = (
+            Path(configured_tasks).expanduser() if configured_tasks
+            else package_share / 'config' / 'task_units.yaml')
+        route_path = (
+            Path(configured_routes).expanduser() if configured_routes
+            else package_share / 'config' / 'routes.yaml')
+        self.task_units = TaskUnitTracker(
+            TaskUnitCatalog.from_files(task_path, route_path))
         route_qos = QoSProfile(
             depth=10,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -134,6 +152,7 @@ class ShowroomTaskManager(Node):
             'override_default_duration_sec': (
                 self.action_policy.default_duration),
             'override_time_source': 'steady_wall_clock',
+            'current_task': self.task_units.snapshot(),
         })
         status.update({'type': 'business_status', 'reason': reason})
         self.publish_json(self.status_publisher, status)
@@ -223,9 +242,41 @@ class ShowroomTaskManager(Node):
             self.override_leases.release(robot_id)
             if action == 'start_default':
                 effects.extend(self.logic.start_default(robot_id))
+                if robot_id == 'robot_0':
+                    self.task_units.start()
             elif action == 'cancel':
                 effects.extend(self.logic.cancel_robot(robot_id))
+                if robot_id == 'robot_0':
+                    self.task_units.clear()
         return effects, f'{action} accepted for {robot_ids}'
+
+    def execute_task_edit(self, intent):
+        """Edit the guide route at semantic task boundaries."""
+        guide_state = self.logic.state_for('robot_0')
+        if guide_state not in (
+                'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
+                'PAUSED', 'BLOCKED'):
+            raise TaskUnitError('蓝色导览机器人当前没有可编辑的导览任务')
+
+        effects = []
+        self.override_leases.release('robot_0')
+        if guide_state == 'PAUSED':
+            effects.extend(self.logic.resume_robot('robot_0'))
+        elif guide_state == 'BLOCKED':
+            previous = self.logic.blocked_from.pop('robot_0', 'TOURING')
+            self.logic.guide_state = previous
+
+        route_effect, previous, target = self.task_units.edit(intent)
+        effects.append(route_effect)
+        if intent == 'repeat_current':
+            detail = f'重新执行当前任务：{target.display_name}'
+        elif intent == 'skip_current':
+            detail = (
+                f'已跳过 {previous.display_name}，下一任务：'
+                f'{target.display_name}')
+        else:
+            detail = f'进入下一任务：{target.display_name}'
+        return effects, detail
 
     def execute_command(self, document, source):
         intent = document.get('intent') or document.get('command')
@@ -243,10 +294,20 @@ class ShowroomTaskManager(Node):
             detail = f'resumed default mission for {affected}'
         elif intent == 'robot_action':
             effects, detail = self.execute_robot_action(document)
+        elif intent in TaskUnitTracker.EDIT_INTENTS:
+            effects, detail = self.execute_task_edit(intent)
+        elif intent in ('explain_current', 'explain_more'):
+            effects = []
+            detail = self.task_units.explanation(
+                detailed=intent == 'explain_more')
         else:
             if intent in ('cancel_all', 'reset'):
                 self.override_leases.clear()
             effects = self.logic.handle_command(document)
+            if intent == 'start_tour':
+                self.task_units.start()
+            elif intent in ('cancel_all', 'reset'):
+                self.task_units.clear()
         self.apply_effects(effects)
         self.publish_status(f'{source}:{intent}')
         self.publish_response(True, intent, detail)
@@ -293,6 +354,19 @@ class ShowroomTaskManager(Node):
             robot_id = document.get('robot_id')
             if event_type in ('route_cancelled', 'route_completed'):
                 self.override_leases.release(robot_id)
+            if robot_id == 'robot_0':
+                if event_type == 'route_started':
+                    if self.task_units.current is None:
+                        self.task_units.start()
+                elif event_type == 'waypoint_reached':
+                    self.task_units.observe_waypoint(
+                        document.get('label'), document.get('index'))
+                elif event_type == 'route_seeked':
+                    self.task_units.observe_seek(
+                        document.get('label'), document.get('index'),
+                        document.get('task_id'))
+                elif event_type == 'route_cancelled':
+                    self.task_units.clear()
             effects = self.logic.handle_event(document)
             for effect in effects:
                 if (effect.get('type') == 'route_command'
@@ -306,7 +380,8 @@ class ShowroomTaskManager(Node):
             event_name = document.get('type', 'unknown')
             event_label = document.get('label', '')
             self.publish_status(f'robot_event:{event_name}:{event_label}')
-        except (json.JSONDecodeError, TypeError, ValueError) as exception:
+        except (TaskUnitError, json.JSONDecodeError,
+                TypeError, ValueError) as exception:
             self.get_logger().warning(f'Ignored robot event: {exception}')
 
     def auto_start_callback(self):

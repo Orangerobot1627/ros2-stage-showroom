@@ -18,6 +18,7 @@ Windows 本地模型服务的 LLM 桥接层。Nav2、语音和视觉能力将在
 - 聚合运行监控：仿真时间、航点进度、位姿、速度、雷达净空、阻塞时长和恢复状态
 - 根据导览进度派发咖啡任务，避免使用固定时间启动配送
 - 配置驱动的机器人 action、人工临时接管租约和默认任务自动恢复
+- 7 个语义导览任务单元，支持跳过、重复、进入下一任务和上下文讲解
 - 可选的本地 LLM 桥接层，支持 Qwen 的 Ollama 和 OpenAI 兼容 HTTP 接口
 - 本地 Whisper 中文语音识别和 Piper 中文语音合成，支持半双工防回声
 - Stage GUI 路线标记、无界面运行模式和机器人位置重置服务
@@ -42,6 +43,9 @@ demo_stage/
 [docs/TASK_ARBITRATION.md](docs/TASK_ARBITRATION.md)。主要参数位于
 `config/action_policy.yaml`，可以配置默认路线、机器人别名、允许的 action、默认接管时间
 以及最长/最短时间。
+
+动态任务编辑见 [docs/TASK_EDITING.md](docs/TASK_EDITING.md)。任务边界和讲解资料位于
+`config/task_units.yaml`；LLM 只选择受控 intent，实际航点索引由任务管理器解析和校验。
 
 ## 环境要求
 

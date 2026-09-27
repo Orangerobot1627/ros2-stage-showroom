@@ -18,7 +18,7 @@ from showroom_llm_contract import (
     validate_model_result,
 )
 from showroom_llm_core import create_backend
-from showroom_llm_prompt import build_messages
+from showroom_llm_prompt import build_messages, ground_explanation_result
 from std_msgs.msg import String
 import yaml
 
@@ -184,7 +184,9 @@ class ShowroomLLMBridge(Node):
                     knowledge=self.knowledge,
                 )
                 raw_output = self.backend.complete(messages)
-                result = validate_model_result(extract_json_object(raw_output))
+                document = extract_json_object(raw_output)
+                document = ground_explanation_result(document, business)
+                result = validate_model_result(document)
                 self.completed.put({
                     'request_id': request['request_id'],
                     'user_text': request['user_text'],

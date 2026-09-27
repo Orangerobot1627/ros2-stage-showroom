@@ -225,6 +225,38 @@ class WaypointFollower(Node):
             self.publish_event('route_resumed')
             self.publish_navigation_status()
             self.get_logger().info(f'Resumed route {self.route_name!r}')
+        elif action == 'seek':
+            target_index = document.get('waypoint_index')
+            if (isinstance(target_index, bool)
+                    or not isinstance(target_index, int)
+                    or not 0 <= target_index < len(self.waypoints)):
+                self.get_logger().warning(
+                    f'Rejected invalid seek index: {target_index!r}')
+                self.publish_event(
+                    'route_command_rejected', action='seek',
+                    reason='invalid_waypoint_index')
+                return
+            self.index = target_index
+            self.finished = False
+            self.active = True
+            self.blocked = False
+            self.blocked_since = None
+            self.activation_delay = 0.0
+            label = self.waypoints[self.index].get(
+                'label', f'waypoint_{self.index}')
+            self.publish_stop()
+            self.publish_event(
+                'route_seeked',
+                label=label,
+                index=self.index + 1,
+                total=len(self.waypoints),
+                task_id=document.get('task_id'),
+                task_edit=document.get('task_edit'),
+            )
+            self.publish_navigation_status()
+            self.get_logger().info(
+                f'Seek route to {self.index + 1}/{len(self.waypoints)}: '
+                f'{label}')
         elif action == 'cancel':
             self.active = False
             self.finished = True

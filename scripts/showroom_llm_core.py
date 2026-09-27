@@ -17,7 +17,11 @@ from showroom_llm_contract import (
     LLMTransportError,
     validate_model_result,
 )
-from showroom_llm_prompt import build_messages, compact_context
+from showroom_llm_prompt import (
+    build_messages,
+    compact_context,
+    ground_explanation_result,
+)
 from showroom_ollama_client import OllamaClient
 
 
@@ -92,6 +96,27 @@ class MockBackend:
             '两个机器人', '两台机器人', '所有机器人'))
         if any(word in user_text for word in ('状态', '到哪', '为什么停')):
             result = {'intent': 'ask_status'}
+        elif any(word in user_text for word in (
+                '详细讲', '深入讲', '展开讲', '为什么它')):
+            result = {
+                'intent': 'explain_more',
+                'reply': '我会结合当前展区内容作进一步说明。',
+            }
+        elif any(word in user_text for word in (
+                '讲解当前', '介绍当前', '讲讲这个', '解释一下')):
+            result = {
+                'intent': 'explain_current',
+                'reply': '我来介绍当前展区的主要内容。',
+            }
+        elif any(word in user_text for word in (
+                '跳过', '没兴趣', '不想看这个')):
+            result = {'intent': 'skip_current'}
+        elif any(word in user_text for word in (
+                '重新参观', '这个展区再来一遍', '重复当前任务')):
+            result = {'intent': 'repeat_current'}
+        elif any(word in user_text for word in (
+                '下一个任务', '下个展区', '继续下一个')):
+            result = {'intent': 'next_task'}
         elif any(word in user_text for word in (
                 '暂停', '等一下', '稍等', '多看一会', '别往前走')):
             if coffee_robot or all_robots:
@@ -171,5 +196,6 @@ __all__ = [
     'compact_context',
     'create_backend',
     'extract_json_object',
+    'ground_explanation_result',
     'validate_model_result',
 ]

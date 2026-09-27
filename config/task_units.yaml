@@ -1,0 +1,54 @@
+version: 1
+route: guide_full_route
+
+# A task unit is a visitor-facing section of the fixed guide route. The task
+# manager resolves labels to route indices; the LLM never receives coordinates.
+task_units:
+  - id: reception
+    display_name: 入馆接待
+    start_waypoint: entrance
+    end_waypoint: stairs_clearance
+    summary: 欢迎游客并说明本次科技展馆导览的基本流程。
+    detail: 导览机器人会确认参观需求，从入口带领游客进入主展线，并说明途中可以随时暂停、跳过展区或要求补充讲解。
+
+  - id: technology_history
+    display_name: 科技发展历史展区
+    start_waypoint: coffee_south_east
+    end_waypoint: history_panel_8
+    summary: 通过环形展线回顾计算、通信与智能技术的发展脉络。
+    detail: 本展区把关键技术按时间线组织起来，强调基础计算能力、网络连接和人工智能如何逐步汇合，并形成今天的智能机器人系统。
+
+  - id: vision_hall
+    display_name: 计算机视觉展厅
+    start_waypoint: vision_hall_entry
+    end_waypoint: vision_exit
+    summary: 介绍机器如何利用摄像头和算法理解图像与环境。
+    detail: 计算机视觉通常经历图像采集、特征提取、目标识别和空间理解等步骤。真实机器人还需要把视觉结果与雷达、里程计等传感器信息结合，降低遮挡和光照变化带来的误差。
+
+  - id: robotics_hall
+    display_name: 智能机器人展厅
+    start_waypoint: robotics_entry_approach
+    end_waypoint: robotics_loop_close
+    summary: 展示机器人感知、决策、规划与执行形成的闭环系统。
+    detail: 机器人并非只执行一条控制指令，而是持续读取传感器、估计自身状态、选择任务、规划运动并检查执行结果。ROS 2 节点和标准话题让这些能力能够独立开发并组合验证。
+
+  - id: time_tunnel
+    display_name: 时空科技隧道
+    start_waypoint: hidden_door_approach
+    end_waypoint: hidden_door_exit
+    summary: 通过隐藏通道串联沉浸式科技体验与下一展区。
+    detail: 该区域模拟商业展馆中的受限通道。机器人需要保持定位连续性、关注通道净空，并在进入与离开时向业务系统报告进度，以便协调咖啡配送等并行服务。
+
+  - id: dance_hall
+    display_name: 科技舞蹈展厅
+    start_waypoint: dance_inside
+    end_waypoint: dance_semi_open_exit
+    summary: 展示机器人控制、群体协作与数字艺术的结合。
+    detail: 科技舞蹈把轨迹规划、节拍同步和多设备协同转化为可见的表演。稳定效果依赖统一时间基准、受控动作集合以及发生偏差时的恢复机制。
+
+  - id: lounge
+    display_name: 智能休息服务区
+    start_waypoint: lounge_top_entry
+    end_waypoint: guide_destination
+    summary: 引导游客进入休息区，并与咖啡配送机器人完成服务衔接。
+    detail: 导览机器人在这里结束主参观路线，服务机器人根据导览进度配送咖啡。两个机器人通过任务事件协调，而不是依靠固定等待时间，因此仿真速度变化不会破坏业务顺序。

@@ -27,6 +27,7 @@ install(
     scripts/showroom_llm_prompt.py
     scripts/showroom_ollama_client.py
     scripts/showroom_action_policy.py
+    scripts/showroom_task_units.py
     scripts/showroom_voice_core.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -84,6 +85,13 @@ if(BUILD_TESTING)
   ament_add_test(
     showroom_voice_core
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_voice_core.py
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+    TIMEOUT 30
+  )
+
+  ament_add_test(
+    showroom_task_units
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_task_units.py
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO
     TIMEOUT 30
   )

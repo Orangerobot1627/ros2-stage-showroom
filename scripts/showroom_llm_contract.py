@@ -13,6 +13,11 @@ COMMAND_INTENTS = {
     'cancel_all',
     'reset',
     'robot_action',
+    'skip_current',
+    'repeat_current',
+    'next_task',
+    'explain_current',
+    'explain_more',
 }
 NON_COMMAND_INTENTS = {'ask_status', 'chat'}
 ALLOWED_INTENTS = COMMAND_INTENTS | NON_COMMAND_INTENTS
@@ -30,6 +35,11 @@ DEFAULT_REPLIES = {
     'cancel_all': '已提交取消全部任务请求。',
     'reset': '已提交系统业务重置请求。',
     'robot_action': '已提交机器人临时动作请求。',
+    'skip_current': '好的，已跳过当前展区，继续下一个导览任务。',
+    'repeat_current': '好的，我会从头重复当前展区的导览任务。',
+    'next_task': '好的，现在进入下一个导览任务。',
+    'explain_current': '我来介绍当前展区。',
+    'explain_more': '我再详细介绍一下当前展区。',
     'ask_status': '我已经读取当前任务状态，请查看机器人运行信息。',
     'chat': '我目前可以帮助您开始、暂停或继续导览，也可以安排咖啡服务。',
 }
@@ -133,6 +143,9 @@ def validate_model_result(document):
                 result['reply'] = f'{robot_name}现在开始执行默认任务。'
             else:
                 result['reply'] = f'已取消{robot_name}的当前任务。'
+    if intent in ('explain_current', 'explain_more'):
+        if not model_supplied_reply:
+            raise LLMOutputError(f'{intent} 必须包含基于当前任务的 reply')
     return result
 
 

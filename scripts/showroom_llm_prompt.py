@@ -4,6 +4,27 @@
 import json
 
 
+def ground_explanation_result(document, business):
+    """Replace explanation prose with configured current-task knowledge."""
+    if not isinstance(document, dict):
+        return document
+    intent = document.get('intent')
+    field = {
+        'explain_current': 'summary',
+        'explain_more': 'detail',
+    }.get(intent)
+    if field is None:
+        return document
+    business = business if isinstance(business, dict) else {}
+    current_task = business.get('current_task') or {}
+    grounded_reply = current_task.get(field)
+    if not isinstance(grounded_reply, str) or not grounded_reply.strip():
+        return document
+    result = dict(document)
+    result['reply'] = grounded_reply.strip()
+    return result
+
+
 def compact_context(business, monitor):
     """Keep only state useful to a small local model."""
     business = business if isinstance(business, dict) else {}
@@ -28,6 +49,7 @@ def compact_context(business, monitor):
             'human_override_active': business.get(
                 'human_override_active'),
             'human_overrides': business.get('human_overrides'),
+            'current_task': business.get('current_task'),
         },
         'robots': compact_robots,
     }
@@ -51,6 +73,11 @@ def build_messages(user_text, business=None, monitor=None, knowledge=None):
 - reset：重置业务
 - robot_action：控制指定机器人。robot 只能是 guide、coffee、all；action 只能是
   pause、resume、start_default、cancel。pause 可增加 duration_sec，默认 20 秒
+- skip_current：游客明确表示对当前展区没兴趣或要求跳过
+- repeat_current：从当前任务单元起点重新执行一次
+- next_task：正常结束当前内容并进入下一个任务单元
+- explain_current：讲解 current_task，必须用 summary 生成 reply
+- explain_more：追问当前内容，必须用 detail 生成更详细的 reply
 - ask_status：询问机器人位置、进度、障碍或任务状态
 - chat：不属于上述业务命令
 
@@ -60,7 +87,12 @@ def build_messages(user_text, business=None, monitor=None, knowledge=None):
 蓝色机器人等待示例：{{"intent":"pause_tour","duration_sec":20}}
 绿色机器人等待示例：{{"intent":"robot_action","robot":"coffee","action":"pause","duration_sec":20}}
 绿色机器人立即执行默认配送：{{"intent":"robot_action","robot":"coffee","action":"start_default"}}
-reply 字段不是必需的，系统会生成确定性的中文确认语。
+跳过当前展区：{{"intent":"skip_current"}}
+重新执行当前展区：{{"intent":"repeat_current"}}
+讲解当前展区：{{"intent":"explain_current","reply":"根据 current_task.summary 生成的讲解"}}
+深入讲解：{{"intent":"explain_more","reply":"根据 current_task.detail 生成的补充讲解"}}
+除 explain_current 和 explain_more 外，reply 字段不是必需的。
+讲解只能使用当前状态中的 current_task 内容，不得编造展品、数字或能力。
 
 展馆资料：{knowledge_text}
 当前系统状态：{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}

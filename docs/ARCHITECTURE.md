@@ -43,10 +43,16 @@ Stage world/models
 暂停前业务状态并发布 `resume`，航点跟随器继续使用未被清除的当前索引。详细协议见
 `docs/TASK_ARBITRATION.md`。
 
+导览路线同时由 `showroom_task_units.py` 映射为语义任务单元。游客的跳过、重复和追问
+针对任务单元执行，不直接操作坐标或任意航点索引。这一层也是后续 multi-step plan
+executor 使用的稳定任务接口。
+
 LLM 层内部继续按职责拆分：`showroom_ollama_client` 只处理 HTTP 和
 `message.content`，`showroom_llm_prompt` 负责提示词与状态裁剪，
 `showroom_llm_contract` 负责 JSON 解析、意图白名单和业务命令转换，ROS bridge 只连接
-这些模块与现有 Topic。Ollama 的 `message.thinking` 不进入输出协议解析。
+这些模块与现有 Topic。当前任务讲解始终由 `task_units.yaml` 中的 `summary` 或 `detail`
+覆盖模型自由文本，避免小模型遗漏字段或编造展品。Ollama 的 `message.thinking` 不进入
+输出协议解析。
 
 后续 Nav2 接入时，用导航节点替换参考航点跟随器；Stage 世界和机器人传感器接口保持
 不变。任务管理器继续使用命名地点和任务事件，LLM 不获得 `/cmd_vel` 控制权。

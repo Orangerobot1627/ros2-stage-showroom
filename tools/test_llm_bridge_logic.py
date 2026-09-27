@@ -20,7 +20,11 @@ from showroom_llm_core import (  # noqa: E402
     OllamaBackend,
     OpenAICompatibleBackend,
 )
-from showroom_llm_prompt import build_messages, compact_context  # noqa: E402
+from showroom_llm_prompt import (  # noqa: E402
+    build_messages,
+    compact_context,
+    ground_explanation_result,
+)
 
 
 def infer_with_mock(text):
@@ -80,6 +84,21 @@ def main():
     expect_invalid({'intent': 'start_tour', 'reply': '开始。', 'coffee': 'yes'})
     expect_invalid({
         'intent': 'robot_action', 'robot': 'guide', 'action': 'fly'})
+    expect_invalid({'intent': 'explain_current'})
+    grounded = ground_explanation_result(
+        {'intent': 'explain_more'},
+        {'current_task': {
+            'summary': '机器人闭环。',
+            'detail': '感知、决策、规划和执行。',
+        }},
+    )
+    assert validate_model_result(grounded)['reply'] == (
+        '感知、决策、规划和执行。')
+    grounded_override = ground_explanation_result(
+        {'intent': 'explain_current', 'reply': '模型编造的内容'},
+        {'current_task': {'summary': '配置中的讲解。'}},
+    )
+    assert grounded_override['reply'] == '配置中的讲解。'
 
     robot_action = validate_model_result({
         'intent': 'robot_action',
@@ -93,6 +112,14 @@ def main():
         'action': 'pause',
         'duration_sec': 20.0,
     }
+    explanation = validate_model_result({
+        'intent': 'explain_current',
+        'reply': '这里展示机器人如何形成感知与控制闭环。',
+    })
+    assert command_from_result(explanation) == {
+        'intent': 'explain_current'}
+    assert command_from_result(validate_model_result({
+        'intent': 'skip_current'})) == {'intent': 'skip_current'}
 
     result = infer_with_mock('开始导览，不需要咖啡')
     assert result == {
@@ -107,6 +134,11 @@ def main():
     assert infer_with_mock(
         '我想在这里多看一会儿，你先别往前走。')['intent'] == 'pause_tour'
     assert infer_with_mock('给我一杯咖啡')['intent'] == 'request_coffee'
+    assert infer_with_mock('这个展厅没兴趣，跳过吧')['intent'] == (
+        'skip_current')
+    assert infer_with_mock('下个展区')['intent'] == 'next_task'
+    assert infer_with_mock('详细讲讲为什么它能避障')['intent'] == (
+        'explain_more')
     assert infer_with_mock('绿色机器人暂停10秒') == {
         'intent': 'robot_action',
         'reply': '绿色服务机器人将等待 10 秒，随后自动恢复原来的任务。',
@@ -127,8 +159,17 @@ def main():
     assert 'private' not in compact['business']
     assert 'pose' not in compact['robots']['robot_0']
 
+    compact = compact_context({
+        'current_task': {
+            'task_id': 'robotics_hall',
+            'summary': '机器人闭环。',
+            'detail': '感知、决策、规划和执行。',
+        }}, {})
+    assert compact['business']['current_task']['task_id'] == 'robotics_hall'
+
     system_prompt = build_messages('你好')[0]['content']
     assert '绝不能生成速度、坐标或 cmd_vel 指令' in system_prompt
+    assert 'skip_current' in system_prompt
     messages = [{'role': 'user', 'content': '你好'}]
     openai_backend = StubOpenAIBackend('http://unused', 'qwen-test')
     assert json.loads(openai_backend.complete(messages))['intent'] == 'chat'
