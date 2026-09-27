@@ -21,6 +21,9 @@ COMMAND_INTENTS = {
     'explain_current',
     'explain_more',
     'execute_plan',
+    'deliver_drink',
+    'skip_task',
+    'visit_only',
 }
 NON_COMMAND_INTENTS = {'ask_status', 'chat'}
 ALLOWED_INTENTS = COMMAND_INTENTS | NON_COMMAND_INTENTS
@@ -47,6 +50,9 @@ DEFAULT_REPLIES = {
     'explain_current': '我来介绍当前展区。',
     'explain_more': '我再详细介绍一下当前展区。',
     'execute_plan': '已生成并提交多步骤服务计划。',
+    'deliver_drink': '已安排服务机器人把饮料送到指定场馆。',
+    'skip_task': '好的，已从后续导览中移除指定场馆。',
+    'visit_only': '好的，已按您选择的场馆重新规划导览。',
     'ask_status': '我已经读取当前任务状态，请查看机器人运行信息。',
     'chat': '我目前可以帮助您开始、暂停或继续导览，也可以安排咖啡服务。',
 }
@@ -125,7 +131,9 @@ def validate_model_result(document):
         if robot not in ('guide', 'coffee', 'all'):
             raise LLMOutputError(
                 'robot_action 的 robot 必须是 guide、coffee 或 all')
-        if action not in ('pause', 'resume', 'start_default', 'cancel'):
+        if action not in (
+                'pause', 'resume', 'start_default', 'cancel',
+                'bypass_obstacle'):
             raise LLMOutputError('robot_action 包含不允许的 action')
         result.update({'robot': robot, 'action': action})
         if action == 'pause' and 'duration_sec' in document:
@@ -150,8 +158,29 @@ def validate_model_result(document):
                 result['reply'] = f'{robot_name}现在继续原来的任务。'
             elif action == 'start_default':
                 result['reply'] = f'{robot_name}现在开始执行默认任务。'
+            elif action == 'bypass_obstacle':
+                result['reply'] = f'{robot_name}将使用局部规划绕过当前障碍。'
             else:
                 result['reply'] = f'已取消{robot_name}的当前任务。'
+    if intent == 'deliver_drink':
+        drink = str(document.get('drink', 'coffee')).strip().lower()
+        target = str(document.get('target', 'current_task')).strip()
+        if drink not in ('coffee', 'water', 'juice', 'drink'):
+            raise LLMOutputError(f'不支持饮料：{drink!r}')
+        if not target or len(target) > 64:
+            raise LLMOutputError('deliver_drink 的 target 无效')
+        result.update({'drink': drink, 'target': target})
+    if intent in ('skip_task', 'visit_only'):
+        tasks = document.get('tasks', document.get('task'))
+        if isinstance(tasks, str):
+            tasks = [tasks]
+        if not isinstance(tasks, list) or not tasks or len(tasks) > 7:
+            raise LLMOutputError(f'{intent} 的 tasks 必须是非空场馆数组')
+        normalized_tasks = list(dict.fromkeys(
+            str(task).strip() for task in tasks if str(task).strip()))
+        if len(normalized_tasks) != len(tasks):
+            raise LLMOutputError(f'{intent} 的 tasks 包含空值或重复值')
+        result['tasks'] = normalized_tasks
     if intent in ('explain_current', 'explain_more'):
         if not model_supplied_reply:
             raise LLMOutputError(f'{intent} 必须包含基于当前任务的 reply')
@@ -181,4 +210,9 @@ def command_from_result(result):
             command['duration_sec'] = result['duration_sec']
     if result['intent'] == 'execute_plan':
         command['plan'] = result['plan']
+    if result['intent'] == 'deliver_drink':
+        command.update({
+            'drink': result['drink'], 'target': result['target']})
+    if result['intent'] in ('skip_task', 'visit_only'):
+        command['tasks'] = result['tasks']
     return command

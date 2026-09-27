@@ -22,6 +22,7 @@ from showroom_llm_prompt import (
     build_messages,
     ground_explanation_result,
     normalize_multi_task_result,
+    normalize_semantic_result,
 )
 from std_msgs.msg import String
 import yaml
@@ -190,6 +191,8 @@ class ShowroomLLMBridge(Node):
                 raw_output = self.backend.complete(messages)
                 document = extract_json_object(raw_output)
                 document = normalize_multi_task_result(
+                    document, request['user_text'])
+                document = normalize_semantic_result(
                     document, request['user_text'])
                 document = ground_explanation_result(document, business)
                 result = validate_model_result(document)

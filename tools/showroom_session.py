@@ -25,6 +25,7 @@ NAVIGATION_NAMES = {
     'WAITING': '等待任务', 'NAVIGATING': '正在导航',
     'BLOCKED': '遇障停车', 'PAUSED': '业务暂停',
     'COMPLETED': '任务完成', 'CANCELLED': '任务取消',
+    'AVOIDING': '正在局部绕障',
 }
 GUIDE_STATE_NAMES = {
     'IDLE': '空闲', 'RECEPTION': '入口接待', 'TOURING': '导览中',
@@ -153,7 +154,13 @@ def render_robot_summary(name, robot):
         f'{velocity.get("angular_z", 0.0):.2f} rad/s  |  '
         f'前方净空 {clearance_text}',
     ]
-    if robot.get('navigation_state') == 'BLOCKED':
+    if robot.get('navigation_state') == 'AVOIDING':
+        local = robot.get('local_planner') or {}
+        lines.append(
+            '  局部导航: 正在自动绕过障碍  |  '
+            f'阶段 {local.get("state", "未知")}  |  '
+            f'累计绕障 {local.get("avoidance_count", 0)} 次')
+    elif robot.get('navigation_state') == 'BLOCKED':
         lines.append(
             '  障碍恢复: 已停车，障碍移开后自动继续  |  '
             f'已等待 {format_duration(robot.get("blocked_duration_sec"))}')

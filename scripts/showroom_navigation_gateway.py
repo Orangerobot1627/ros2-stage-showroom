@@ -6,13 +6,16 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from showroom_navigation import (
     build_delivery_plan,
+    build_guide_plan,
     GraphRoutePlanner,
     NavigationError,
 )
+from showroom_task_units import TaskUnitCatalog
 from std_msgs.msg import String
 
 
@@ -44,6 +47,8 @@ class ShowroomNavigationGateway(Node):
             Path(routes_value).expanduser() if routes_value
             else share / 'config' / 'routes.yaml')
         self.planner = GraphRoutePlanner.from_files(graph_path, routes_path)
+        self.task_catalog = TaskUnitCatalog.from_files(
+            share / 'config' / 'task_units.yaml', routes_path)
 
         reliable = QoSProfile(
             depth=20,
@@ -76,9 +81,14 @@ class ShowroomNavigationGateway(Node):
             if not isinstance(request, dict):
                 raise NavigationError('Navigation request must be an object')
             mission_id = request.get('mission_id')
-            if request.get('request_type') != 'delivery':
+            request_type = request.get('request_type')
+            if request_type == 'delivery':
+                plan = build_delivery_plan(self.planner, request)
+            elif request_type == 'guide_itinerary':
+                plan = build_guide_plan(
+                    self.planner, request, self.task_catalog)
+            else:
                 raise NavigationError('Unsupported navigation request type')
-            plan = build_delivery_plan(self.planner, request)
             if self.backend == 'stage_graph':
                 command = dict(plan)
                 command.update({
@@ -93,7 +103,9 @@ class ShowroomNavigationGateway(Node):
                 'backend': self.backend,
                 'mission_id': mission_id,
                 'robot_id': plan['robot_id'],
-                'service_target': plan['service_target'],
+                'request_type': plan['request_type'],
+                'service_target': plan.get('service_target'),
+                'task_ids': plan.get('task_ids'),
                 'distance_m': plan['distance_m'],
                 'cost': plan['cost'],
                 'cost_profile': plan['cost_profile'],
@@ -117,7 +129,7 @@ def main(args=None):
     node = ShowroomNavigationGateway()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

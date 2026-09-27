@@ -45,3 +45,8 @@ actions:
     allowed_robots: [guide, coffee, all]
     completion: immediate
     fallback: none
+  bypass_obstacle:
+    display_name: 局部绕过障碍
+    allowed_robots: [guide, coffee, all]
+    completion: local_planner_rejoined
+    fallback: stop

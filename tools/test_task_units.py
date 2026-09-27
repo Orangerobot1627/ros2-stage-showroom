@@ -25,6 +25,9 @@ def main():
     assert catalog.units[0].task_id == 'reception'
     assert catalog.units[-1].task_id == 'lounge'
     assert catalog.units[-1].end_index == 64
+    assert catalog.resolve('视觉馆').task_id == 'vision_hall'
+    assert [unit.task_id for unit in catalog.ordered(
+        ['舞蹈馆', 'vision_hall'])] == ['vision_hall', 'dance_hall']
 
     tracker = TaskUnitTracker(catalog)
     assert tracker.snapshot() is None
@@ -80,6 +83,13 @@ def main():
         raise AssertionError('Advancing past the final task must be rejected')
     tracker.clear()
     assert tracker.snapshot() is None
+    tracker.start()
+    tracker.set_itinerary(
+        ['vision_hall', 'lounge'], skipped=['robotics_hall'])
+    assert tracker.snapshot()['itinerary'] == ['vision_hall', 'lounge']
+    assert tracker.snapshot()['skipped_task_ids'] == ['robotics_hall']
+    assert not tracker.observe_waypoint('robotics_inside', reached_index=2)
+    assert tracker.current.task_id == 'vision_hall'
     print('Semantic guide task units and task editing: OK')
 
 

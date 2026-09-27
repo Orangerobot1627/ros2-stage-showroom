@@ -333,6 +333,7 @@ def generate_launch_description():
                 'max_linear_speed': 0.65,
                 'max_angular_speed': 1.2,
                 'obstacle_stop_distance': 0.60,
+                'avoidance_trigger_distance': 0.64,
             }],
         ),
 
@@ -361,6 +362,7 @@ def generate_launch_description():
                 'max_linear_speed': 0.55,
                 'max_angular_speed': 1.1,
                 'obstacle_stop_distance': 0.65,
+                'avoidance_trigger_distance': 0.70,
             }],
         ),
     ])

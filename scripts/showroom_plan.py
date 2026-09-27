@@ -22,9 +22,16 @@ ALLOWED_ACTIONS = {
     'repeat_current',
     'next_task',
     'announce',
+    'skip_task',
+    'visit_only',
+    'bypass_obstacle',
 }
 ALLOWED_ROBOTS = {'guide', 'coffee', 'all'}
 ALLOWED_DRINKS = {'coffee', 'water', 'juice', 'drink'}
+ALLOWED_TASKS = {
+    'reception', 'technology_history', 'vision_hall', 'robotics_hall',
+    'time_tunnel', 'dance_hall', 'lounge',
+}
 
 
 def validate_plan(actions, default_pause_sec=20.0, max_steps=8):
@@ -69,6 +76,26 @@ def validate_plan(actions, default_pause_sec=20.0, max_steps=8):
             if not text or len(text) > 200:
                 raise PlanError(f'plan[{index}].text 必须为 1..200 个字符')
             result['text'] = text
+        elif action in ('skip_task', 'visit_only'):
+            raw_tasks = item.get('tasks', item.get('task'))
+            if isinstance(raw_tasks, str):
+                raw_tasks = [raw_tasks]
+            if (not isinstance(raw_tasks, list) or not raw_tasks
+                    or len(raw_tasks) > len(ALLOWED_TASKS)):
+                raise PlanError(
+                    f'plan[{index}].tasks 必须是非空场馆数组')
+            tasks = list(dict.fromkeys(
+                str(value).strip() for value in raw_tasks))
+            unknown = [value for value in tasks if value not in ALLOWED_TASKS]
+            if unknown:
+                raise PlanError(f'plan[{index}] 包含未知场馆：{unknown}')
+            result['tasks'] = tasks
+        elif action == 'bypass_obstacle':
+            robot = str(item.get('robot', 'guide')).strip().lower()
+            if robot not in ALLOWED_ROBOTS:
+                raise PlanError(
+                    f'plan[{index}].robot 必须是 guide、coffee 或 all')
+            result['robot'] = robot
         normalized.append(result)
     return normalized
 

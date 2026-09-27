@@ -94,7 +94,13 @@ class GraphRoutePlanner:
             if start not in self.nodes or goal not in self.nodes:
                 raise NavigationError(
                     f'Connector references unknown nodes: {start!r}, {goal!r}')
-            metadata = {'route': None, 'connector': True}
+            metadata = {
+                'route': None,
+                'connector': True,
+                'allowed_robots': tuple(
+                    str(value) for value in
+                    connector.get('allowed_robots') or []),
+            }
             self._add_edge(
                 start, goal, metadata,
                 bidirectional=bool(connector.get('bidirectional', True)))
@@ -171,6 +177,9 @@ class GraphRoutePlanner:
             if current == goal:
                 break
             for neighbor, (edge_distance, metadata) in self.edges[current].items():
+                allowed = metadata.get('allowed_robots') or ()
+                if allowed and (context or {}).get('robot_id') not in allowed:
+                    continue
                 edge_cost = self.cost_model.edge_cost(
                     edge_distance, metadata, context=context)
                 candidate = cost + edge_cost
@@ -221,9 +230,11 @@ class GraphRoutePlanner:
     def plan_delivery(self, task_id, start=None, context=None):
         """Plan standby/current -> pickup -> visitor -> standby service."""
         target = self.target_for_task(task_id)
+        planning_context = dict(context or {})
+        planning_context['robot_id'] = 'robot_1'
         return self.plan(
             [start or self.standby, self.pickup, target, self.standby],
-            context=context,
+            context=planning_context,
         )
 
 
@@ -262,6 +273,70 @@ def build_delivery_plan(planner, request):
         'request_type': 'delivery',
         'service_target': task_id,
         'beverage': str(request.get('beverage', 'coffee')),
+        'frame_id': planner.frame_id,
+        'cost_profile': route.cost_profile,
+        'distance_m': route.distance_m,
+        'cost': route.cost,
+        'nodes': list(route.nodes),
+        'waypoints': waypoints,
+    }
+
+
+def build_guide_plan(planner, request, task_catalog):
+    """Build a safe graph route through a selected ordered task itinerary."""
+    if not isinstance(request, dict):
+        raise NavigationError('Navigation request must be an object')
+    if request.get('robot_id') != 'robot_0':
+        raise NavigationError('Guide itinerary is assigned to robot_0')
+    mission_id = str(request.get('mission_id', '')).strip()
+    start = str(request.get('start', '')).strip()
+    task_ids = request.get('task_ids')
+    if not mission_id or not start or not isinstance(task_ids, list):
+        raise NavigationError(
+            'Guide itinerary needs mission_id, start, and task_ids')
+    try:
+        units = task_catalog.ordered(task_ids)
+    except (ValueError, TypeError) as exception:
+        raise NavigationError(str(exception)) from exception
+    if not units:
+        raise NavigationError('Guide itinerary contains no known tasks')
+
+    # Each chosen exhibit is traversed from its configured start to end. The
+    # graph planner connects those ranges through validated shared corridors.
+    stops = [start]
+    stop_metadata = []
+    resume_task_id = str(request.get('resume_task_id', '')).strip()
+    for unit_index, unit in enumerate(units):
+        boundaries = [
+            ('task_start', unit.start_waypoint),
+            ('task_end', unit.end_waypoint),
+        ]
+        if unit_index == 0 and unit.task_id == resume_task_id:
+            # A task-selection edit should continue the current exhibit from
+            # the last reached graph node instead of restarting its loop.
+            boundaries = [('task_end', unit.end_waypoint)]
+        for phase, label in boundaries:
+            if stops[-1] != label:
+                stops.append(label)
+                stop_metadata.append((unit.task_id, phase))
+            elif stop_metadata:
+                stop_metadata[-1] = (unit.task_id, phase)
+    route = planner.plan(stops)
+    waypoints = [dict(item) for item in route.waypoints]
+    for item in waypoints:
+        item['mission_id'] = mission_id
+    for stop_index, metadata in zip(route.stop_indices, stop_metadata):
+        task_id, phase = metadata
+        waypoints[stop_index]['task_id'] = task_id
+        waypoints[stop_index]['task_phase'] = phase
+    return {
+        'type': 'navigation_plan',
+        'robot_id': 'robot_0',
+        'route': str(request.get('route', 'guide_selected_route')),
+        'mission_id': mission_id,
+        'request_type': 'guide_itinerary',
+        'task_ids': [unit.task_id for unit in units],
+        'resume_task_id': resume_task_id or None,
         'frame_id': planner.frame_id,
         'cost_profile': route.cost_profile,
         'distance_m': route.distance_m,

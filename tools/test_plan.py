@@ -30,6 +30,13 @@ def main():
         },
         {'action': 'announce', 'text': '饮料已经送到。'},
     ]
+    selection = validate_plan([
+        {'action': 'visit_only', 'tasks': ['vision_hall', 'dance_hall']},
+        {'action': 'bypass_obstacle', 'robot': 'guide'},
+    ])
+    assert selection[0]['tasks'] == ['vision_hall', 'dance_hall']
+    assert selection[1] == {
+        'action': 'bypass_obstacle', 'robot': 'guide'}
 
     executor = SequentialPlanExecutor()
     executor.start('plan-1', actions, source='llm')

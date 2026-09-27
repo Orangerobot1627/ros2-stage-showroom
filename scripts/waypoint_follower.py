@@ -7,6 +7,7 @@ from pathlib import Path
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -15,6 +16,7 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 from sensor_msgs.msg import LaserScan
+from showroom_local_planner import ReactiveLocalPlanner, scan_sectors
 from std_msgs.msg import String
 import yaml
 
@@ -35,6 +37,9 @@ class WaypointFollower(Node):
         self.declare_parameter('goal_tolerance', 0.30)
         self.declare_parameter('heading_tolerance', 0.30)
         self.declare_parameter('obstacle_stop_distance', 0.60)
+        self.declare_parameter('enable_local_avoidance', True)
+        self.declare_parameter('avoidance_trigger_distance', 0.64)
+        self.declare_parameter('avoidance_pass_distance', 1.25)
         self.declare_parameter('pose_topic', 'ground_truth')
         self.declare_parameter('scan_topic', 'base_scan')
         self.declare_parameter('loop', False)
@@ -72,6 +77,8 @@ class WaypointFollower(Node):
         self.goal_tolerance = float(self.get_parameter('goal_tolerance').value)
         self.heading_tolerance = float(self.get_parameter('heading_tolerance').value)
         self.stop_distance = float(self.get_parameter('obstacle_stop_distance').value)
+        self.local_avoidance_enabled = bool(
+            self.get_parameter('enable_local_avoidance').value)
         self.pose_topic = self.get_parameter('pose_topic').value
         self.loop = bool(self.get_parameter('loop').value)
         self.robot_id = self.get_parameter('robot_id').value
@@ -82,6 +89,24 @@ class WaypointFollower(Node):
 
         self.pose = None
         self.front_clearance = math.inf
+        self.scan_clearances = {
+            name: math.inf for name in (
+                'front', 'left_front', 'right_front',
+                'left_side', 'right_side')}
+        avoidance_trigger = float(self.get_parameter(
+            'avoidance_trigger_distance').value)
+        self.local_planner = ReactiveLocalPlanner(
+            trigger_distance=avoidance_trigger,
+            clear_distance=max(
+                avoidance_trigger + 0.16,
+                self.stop_distance + 0.20),
+            emergency_distance=min(0.30, self.stop_distance * 0.5),
+            pass_distance=float(self.get_parameter(
+                'avoidance_pass_distance').value),
+            pass_speed=min(0.24, self.max_linear * 0.6),
+            turn_speed=min(0.75, self.max_angular * 0.8),
+        )
+        self.force_avoidance_requested = False
         self.index = 0
         self.finished = False
         self.active = not self.wait_for_start
@@ -189,6 +214,7 @@ class WaypointFollower(Node):
             'dynamic_path': self.dynamic_path,
             'mission_id': self.mission_context.get('mission_id'),
             'service_target': self.mission_context.get('service_target'),
+            'local_planner': self.local_planner.snapshot(),
         }
         message = String()
         message.data = json.dumps(
@@ -203,7 +229,8 @@ class WaypointFollower(Node):
             return
         if document.get('robot_id') != self.robot_id:
             return
-        if document.get('route') not in (None, self.route_name):
+        if (document.get('action') not in ('follow_path', 'bypass_obstacle')
+                and document.get('route') not in (None, self.route_name)):
             return
 
         action = document.get('action')
@@ -216,6 +243,7 @@ class WaypointFollower(Node):
             self.active = True
             self.blocked = False
             self.blocked_since = None
+            self.local_planner.reset()
             self.start_time = self.get_clock().now()
             self.activation_delay = 0.0
             self.publish_event('route_started')
@@ -246,6 +274,7 @@ class WaypointFollower(Node):
             self.active = True
             self.blocked = False
             self.blocked_since = None
+            self.local_planner.reset()
             self.start_time = self.get_clock().now()
             self.activation_delay = 0.0
             self.publish_stop()
@@ -307,10 +336,20 @@ class WaypointFollower(Node):
         elif action == 'cancel':
             self.active = False
             self.finished = True
+            self.local_planner.reset()
             self.publish_stop()
             self.publish_event('route_cancelled')
             self.publish_navigation_status()
             self.get_logger().info(f'Cancelled route {self.route_name!r}')
+        elif action == 'bypass_obstacle':
+            if not self.active or self.finished:
+                self.publish_event(
+                    'route_command_rejected', action=action,
+                    reason='robot_has_no_active_route')
+                return
+            self.force_avoidance_requested = True
+            self.publish_event('avoidance_armed', action=action)
+            self.get_logger().info('Visitor requested local obstacle bypass')
 
     @staticmethod
     def validate_dynamic_path(waypoints):
@@ -320,7 +359,8 @@ class WaypointFollower(Node):
         validated = []
         previous = None
         allowed_metadata = {
-            'mission_id', 'service_target', 'beverage', 'mission_phase'}
+            'mission_id', 'service_target', 'beverage', 'mission_phase',
+            'task_id', 'task_phase'}
         for index, item in enumerate(waypoints):
             if not isinstance(item, dict):
                 raise ValueError(f'waypoint {index} must be an object')
@@ -356,14 +396,10 @@ class WaypointFollower(Node):
         )
 
     def scan_callback(self, message):
-        candidates = []
-        angle = message.angle_min
-        for distance in message.ranges:
-            if abs(angle) <= math.radians(32.0) and math.isfinite(distance):
-                if message.range_min <= distance <= message.range_max:
-                    candidates.append(distance)
-            angle += message.angle_increment
-        self.front_clearance = min(candidates, default=math.inf)
+        self.scan_clearances = scan_sectors(
+            message.ranges, message.angle_min, message.angle_increment,
+            message.range_min, message.range_max)
+        self.front_clearance = self.scan_clearances['front']
 
     def publish_stop(self):
         self.cmd_pub.publish(Twist())
@@ -395,6 +431,8 @@ class WaypointFollower(Node):
                 index=self.index + 1,
                 total=len(self.waypoints),
                 mission_phase=target.get('mission_phase'),
+                task_id=target.get('task_id'),
+                task_phase=target.get('task_phase'),
             )
             self.index += 1
             if self.index >= len(self.waypoints):
@@ -427,10 +465,38 @@ class WaypointFollower(Node):
             speed_scale = max(0.20, 1.0 - abs(heading_error) / self.heading_tolerance)
             command.linear.x = min(self.max_linear, 0.65 * distance) * speed_scale
 
-        obstructed = (
+        route_forward_requested = command.linear.x > 0.0
+        local = None
+        if self.local_avoidance_enabled:
+            if self.force_avoidance_requested:
+                self.force_avoidance_requested = False
+                local = self.local_planner.force(
+                    self.scan_clearances, self.pose)
+            else:
+                local = self.local_planner.update(
+                    self.scan_clearances, self.pose, heading_error,
+                    forward_requested=route_forward_requested)
+        if local is not None:
+            command.linear.x = local.linear
+            command.angular.z = local.angular
+            if local.event:
+                self.publish_event(
+                    local.event,
+                    clearance=self.front_clearance,
+                    local_planner=self.local_planner.snapshot())
+                if local.event == 'avoidance_started':
+                    self.get_logger().warning(
+                        'Local planner started an obstacle bypass')
+                elif local.event == 'obstacle_bypassed':
+                    self.get_logger().info(
+                        'Local planner rejoined the global route')
+
+        local_unsafe = (
+            local is not None and local.event == 'avoidance_blocked')
+        obstructed = local_unsafe or (
             self.front_clearance < self.stop_distance
-            and command.linear.x > 0.0
-        )
+            and route_forward_requested
+            and not self.local_planner.active)
         if obstructed:
             command.linear.x = 0.0
             command.angular.z = 0.0
@@ -465,7 +531,7 @@ def main(args=None):
     node = WaypointFollower()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         try:

@@ -28,6 +28,7 @@ install(
     scripts/showroom_llm_core.py
     scripts/showroom_llm_prompt.py
     scripts/showroom_navigation.py
+    scripts/showroom_local_planner.py
     scripts/showroom_ollama_client.py
     scripts/showroom_plan.py
     scripts/showroom_action_policy.py
@@ -110,6 +111,13 @@ if(BUILD_TESTING)
   ament_add_test(
     showroom_navigation
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_navigation.py
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+    TIMEOUT 30
+  )
+
+  ament_add_test(
+    showroom_local_planner
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_local_planner.py
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO
     TIMEOUT 30
   )

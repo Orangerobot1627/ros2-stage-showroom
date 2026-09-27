@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>demo_stage</name>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
   <description>Two-robot Stage simulation for a technology exhibition hall.</description>
   <maintainer email="xxl@users.noreply.github.com">xxl</maintainer>
   <license>Apache-2.0</license>

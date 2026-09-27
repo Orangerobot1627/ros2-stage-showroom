@@ -22,6 +22,8 @@ def main():
     assert policy.resolve_robots('绿色机器人') == ['robot_1']
     assert policy.resolve_robots('all') == ['robot_0', 'robot_1']
     assert policy.validate_action('pause', 'all') == 'pause'
+    assert policy.validate_action(
+        'bypass_obstacle', 'coffee') == 'bypass_obstacle'
     assert policy.duration() == 20.0
     assert policy.duration(1.0) == 2.0
     assert policy.duration(999.0) == 120.0

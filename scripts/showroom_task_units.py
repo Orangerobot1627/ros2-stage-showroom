@@ -23,6 +23,7 @@ class TaskUnit:
     end_index: int
     summary: str
     detail: str
+    aliases: tuple
 
 
 class TaskUnitCatalog:
@@ -70,6 +71,9 @@ class TaskUnitCatalog:
                 end_index=end_index,
                 summary=str(item.get('summary', '')).strip(),
                 detail=str(item.get('detail', '')).strip(),
+                aliases=tuple(
+                    str(alias).strip() for alias in item.get('aliases') or []
+                    if str(alias).strip()),
             ))
             seen_ids.add(task_id)
             previous_end = end_index
@@ -82,6 +86,13 @@ class TaskUnitCatalog:
         self.waypoint_labels = labels
         self.units = units
         self.units_by_id = {unit.task_id: unit for unit in units}
+        self.aliases = {}
+        for unit in units:
+            for alias in (unit.task_id, unit.display_name, *unit.aliases):
+                key = str(alias).strip().lower()
+                if key in self.aliases and self.aliases[key] != unit.task_id:
+                    raise TaskUnitError(f'Duplicate task alias: {alias!r}')
+                self.aliases[key] = unit.task_id
 
     @classmethod
     def from_files(cls, task_path, route_path):
@@ -114,6 +125,17 @@ class TaskUnitCatalog:
         except KeyError as exception:
             raise TaskUnitError(f'未知导览任务：{task_id!r}') from exception
 
+    def resolve(self, value):
+        """Resolve a stable task id or configured visitor-facing alias."""
+        key = str(value).strip().lower()
+        task_id = self.aliases.get(key, key)
+        return self.unit_for_id(task_id)
+
+    def ordered(self, task_ids):
+        """Resolve, deduplicate, and restore physical showroom order."""
+        requested = {self.resolve(task_id).task_id for task_id in task_ids}
+        return [unit for unit in self.units if unit.task_id in requested]
+
 
 class TaskUnitTracker:
     """Track and edit the current guide task without owning robot motion."""
@@ -126,6 +148,8 @@ class TaskUnitTracker:
         self.last_waypoint = None
         self.last_edit = None
         self.pending_seek_task_id = None
+        self.itinerary = None
+        self.skipped_task_ids = []
 
     @property
     def current(self):
@@ -138,22 +162,46 @@ class TaskUnitTracker:
         self.last_waypoint = None
         self.last_edit = None
         self.pending_seek_task_id = None
+        self.itinerary = None
+        self.skipped_task_ids = []
 
     def clear(self):
         self.current_index = None
         self.last_waypoint = None
         self.last_edit = None
         self.pending_seek_task_id = None
+        self.itinerary = None
+        self.skipped_task_ids = []
+
+    def set_itinerary(self, task_ids, skipped=None):
+        """Set a semantic visit list independently from its planned path."""
+        units = self.catalog.ordered(task_ids)
+        if not units:
+            raise TaskUnitError('至少需要保留一个导览场馆')
+        self.itinerary = [unit.task_id for unit in units]
+        self.skipped_task_ids = list(dict.fromkeys(skipped or []))
+        self.current_index = self.catalog.units.index(units[0])
+        self.last_waypoint = None
+        self.last_edit = 'set_itinerary'
+        self.pending_seek_task_id = None
+        return units
 
     def observe_waypoint(self, label=None, reached_index=None):
         """Update the task from a 1-based route event or waypoint label."""
         if self.pending_seek_task_id is not None:
             return False
+        if label is not None and label not in self.catalog.waypoint_labels:
+            return False
         route_index = None
-        if isinstance(reached_index, int) and not isinstance(reached_index, bool):
+        if (label is None and isinstance(reached_index, int)
+                and not isinstance(reached_index, bool)):
             route_index = reached_index - 1
-        self.current_index = self.catalog.unit_index_for_waypoint(
+        target_index = self.catalog.unit_index_for_waypoint(
             label=label, route_index=route_index)
+        target = self.catalog.units[target_index]
+        if self.itinerary is not None and target.task_id not in self.itinerary:
+            return False
+        self.current_index = target_index
         self.last_waypoint = label
         return True
 
@@ -226,4 +274,6 @@ class TaskUnitTracker:
             'detail': unit.detail,
             'last_edit': self.last_edit,
             'pending_seek_task_id': self.pending_seek_task_id,
+            'itinerary': list(self.itinerary) if self.itinerary else None,
+            'skipped_task_ids': list(self.skipped_task_ids),
         }

@@ -8,6 +8,7 @@ import time
 from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.duration import Duration
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from showroom_action_policy import (
@@ -82,7 +83,10 @@ class ShowroomTaskManager(Node):
             TaskUnitCatalog.from_files(task_path, route_path))
         self.plan_executor = SequentialPlanExecutor()
         self.plan_sequence = 0
-        self.robot_locations = {'robot_1': 'coffee_robot_standby'}
+        self.robot_locations = {
+            'robot_0': 'entrance',
+            'robot_1': 'coffee_robot_standby',
+        }
         route_qos = QoSProfile(
             depth=10,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -176,7 +180,8 @@ class ShowroomTaskManager(Node):
                 self.publish_json(self.navigation_request_publisher, effect)
                 self.get_logger().info(
                     f'Dispatch navigation mission {effect["mission_id"]} '
-                    f'to {effect["service_target"]}')
+                    f'type={effect["request_type"]} '
+                    f'target={effect.get("service_target") or effect.get("task_ids")}')
             elif effect.get('type') == 'announcement':
                 self.publish_json(self.announcement_publisher, effect)
 
@@ -264,6 +269,16 @@ class ShowroomTaskManager(Node):
         action = self.action_policy.validate_action(
             document.get('action'), target)
         robot_ids = self.action_policy.resolve_robots(target)
+        if action == 'bypass_obstacle':
+            return [
+                {
+                    'type': 'route_command',
+                    'robot_id': robot_id,
+                    'route': self.logic.route_for(robot_id),
+                    'action': 'bypass_obstacle',
+                }
+                for robot_id in robot_ids
+            ], f'local obstacle bypass requested for {robot_ids}'
         if action == 'pause':
             duration = self.action_policy.duration(
                 document.get('duration_sec'))
@@ -323,7 +338,90 @@ class ShowroomTaskManager(Node):
             if unit is None:
                 raise PlanError('当前没有可作为配送目标的导览任务')
             return unit
-        return self.task_units.catalog.unit_for_id(target)
+        return self.task_units.catalog.resolve(target)
+
+    def next_mission_id(self, prefix):
+        self.plan_sequence += 1
+        return f'{prefix}-{self.plan_sequence:04d}'
+
+    def delivery_effect(self, target, beverage, mission_id=None):
+        """Reserve robot_1 and create one semantic pickup/dropoff request."""
+        unit = self.resolve_plan_target(target)
+        self.logic.begin_delivery(unit.task_id, beverage)
+        mission_id = mission_id or self.next_mission_id('delivery')
+        return {
+            'type': 'navigation_request',
+            'request_type': 'delivery',
+            'robot_id': 'robot_1',
+            'route': self.logic.route_for('robot_1'),
+            'mission_id': mission_id,
+            'start': self.robot_locations.get(
+                'robot_1', 'coffee_robot_standby'),
+            'service_target': unit.task_id,
+            'beverage': beverage,
+        }, unit
+
+    def execute_task_selection(self, intent, requested_tasks):
+        """Replan the guide over selected task units on the shared graph."""
+        if self.logic.state_for('robot_0') not in (
+                'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
+                'PAUSED', 'BLOCKED'):
+            raise TaskUnitError('蓝色导览机器人当前没有可重规划的导览任务')
+        catalog = self.task_units.catalog
+        previous_current = self.task_units.current
+        requested = catalog.ordered(requested_tasks)
+        requested_ids = [unit.task_id for unit in requested]
+        current_index = self.task_units.current_index or 0
+        remaining = catalog.units[current_index:]
+        if intent == 'skip_task':
+            remaining_ids = {unit.task_id for unit in remaining}
+            if not remaining_ids.intersection(requested_ids):
+                raise TaskUnitError('指定场馆已经参观完毕，不在后续导览中')
+            selected = [
+                unit for unit in remaining
+                if unit.task_id not in set(requested_ids)]
+            skipped = requested_ids
+        else:
+            selected = requested
+            skipped = [
+                unit.task_id for unit in remaining
+                if unit.task_id not in set(requested_ids)]
+            # The lounge is the safe end state, not an extra exhibit.
+            lounge = catalog.unit_for_id('lounge')
+            if lounge.task_id not in {unit.task_id for unit in selected}:
+                selected.append(lounge)
+                skipped = [
+                    task_id for task_id in skipped
+                    if task_id != lounge.task_id]
+        if not selected:
+            raise TaskUnitError('筛选后没有剩余导览任务')
+        selected = catalog.ordered([unit.task_id for unit in selected])
+        self.override_leases.release('robot_0')
+        if self.logic.guide_state == 'PAUSED':
+            self.logic.paused_from.pop('robot_0', None)
+        if self.logic.guide_state == 'BLOCKED':
+            self.logic.blocked_from.pop('robot_0', None)
+        self.logic.guide_state = 'TOURING'
+        self.task_units.set_itinerary(
+            [unit.task_id for unit in selected], skipped=skipped)
+        mission_id = self.next_mission_id('guide')
+        effect = {
+            'type': 'navigation_request',
+            'request_type': 'guide_itinerary',
+            'robot_id': 'robot_0',
+            'route': self.logic.route_for('robot_0'),
+            'mission_id': mission_id,
+            'start': self.robot_locations.get('robot_0', 'entrance'),
+            'task_ids': [unit.task_id for unit in selected],
+            'resume_task_id': (
+                previous_current.task_id
+                if previous_current is not None
+                and previous_current.task_id in {
+                    unit.task_id for unit in selected}
+                else None),
+        }
+        names = '、'.join(unit.display_name for unit in selected)
+        return [effect], f'guide itinerary {mission_id}: {names}'
 
     def execute_plan_action(self, action):
         """Execute one normalized action and return effects/detail/wait."""
@@ -342,6 +440,14 @@ class ShowroomTaskManager(Node):
         if action_name in TaskUnitTracker.EDIT_INTENTS:
             effects, detail = self.execute_task_edit(action_name)
             return effects, detail, None
+        if action_name in ('skip_task', 'visit_only'):
+            effects, detail = self.execute_task_selection(
+                action_name, action['tasks'])
+            return effects, detail, None
+        if action_name == 'bypass_obstacle':
+            effects, detail = self.execute_robot_action({
+                'robot': action['robot'], 'action': 'bypass_obstacle'})
+            return effects, detail, None
         if action_name == 'announce':
             effect = {
                 'type': 'announcement',
@@ -350,23 +456,12 @@ class ShowroomTaskManager(Node):
             }
             return [effect], action['text'], None
         if action_name == 'deliver_drink':
-            unit = self.resolve_plan_target(action['target'])
             beverage = action['drink']
-            self.logic.begin_delivery(unit.task_id, beverage)
             mission_id = (
                 f'{self.plan_executor.plan_id}-step-'
                 f'{self.plan_executor.current_index + 1}')
-            effect = {
-                'type': 'navigation_request',
-                'request_type': 'delivery',
-                'robot_id': 'robot_1',
-                'route': self.logic.route_for('robot_1'),
-                'mission_id': mission_id,
-                'start': self.robot_locations.get(
-                    'robot_1', 'coffee_robot_standby'),
-                'service_target': unit.task_id,
-                'beverage': beverage,
-            }
+            effect, unit = self.delivery_effect(
+                action['target'], beverage, mission_id=mission_id)
             wait_for = {
                 'type': 'route_completed',
                 'robot_id': 'robot_1',
@@ -389,6 +484,15 @@ class ShowroomTaskManager(Node):
                         'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
                         'PAUSED', 'BLOCKED'):
                     raise PlanError('当前没有可编辑的导览任务')
+            elif action_name in ('skip_task', 'visit_only'):
+                self.task_units.catalog.ordered(action['tasks'])
+                if self.logic.state_for('robot_0') not in (
+                        'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
+                        'PAUSED', 'BLOCKED'):
+                    raise PlanError('当前没有可重规划的导览任务')
+            elif action_name == 'bypass_obstacle':
+                self.action_policy.validate_action(
+                    'bypass_obstacle', action['robot'])
             elif action_name == 'deliver_drink':
                 self.resolve_plan_target(action['target'])
                 if self.logic.coffee_state in (
@@ -449,6 +553,17 @@ class ShowroomTaskManager(Node):
             effects, detail = self.execute_robot_action(document)
         elif intent in TaskUnitTracker.EDIT_INTENTS:
             effects, detail = self.execute_task_edit(intent)
+        elif intent in ('skip_task', 'visit_only'):
+            effects, detail = self.execute_task_selection(
+                intent, document.get('tasks') or [])
+        elif intent == 'deliver_drink':
+            effect, unit = self.delivery_effect(
+                document.get('target', 'current_task'),
+                document.get('drink', 'coffee'))
+            effects = [effect]
+            detail = (
+                f'{document.get("drink", "coffee")} delivery to '
+                f'{unit.display_name}')
         elif intent in ('explain_current', 'explain_more'):
             effects = []
             detail = self.task_units.explanation(
@@ -509,8 +624,8 @@ class ShowroomTaskManager(Node):
             document = self.parse_message(message)
             event_type = document.get('type')
             robot_id = document.get('robot_id')
-            if robot_id == 'robot_1' and document.get('label'):
-                self.robot_locations['robot_1'] = document['label']
+            if robot_id in self.robot_locations and document.get('label'):
+                self.robot_locations[robot_id] = document['label']
             if event_type in ('route_cancelled', 'route_completed'):
                 self.override_leases.release(robot_id)
             if robot_id == 'robot_0':
@@ -587,7 +702,7 @@ def main(args=None):
     node = ShowroomTaskManager()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

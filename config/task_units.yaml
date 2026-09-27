@@ -6,6 +6,7 @@ route: guide_full_route
 task_units:
   - id: reception
     display_name: 入馆接待
+    aliases: [入口, 门口, 接待区, 入馆区]
     start_waypoint: entrance
     end_waypoint: stairs_clearance
     summary: 欢迎游客并说明本次科技展馆导览的基本流程。
@@ -13,6 +14,7 @@ task_units:
 
   - id: technology_history
     display_name: 科技发展历史展区
+    aliases: [历史馆, 历史展区, 科技历史馆, 科技发展史]
     start_waypoint: coffee_south_east
     end_waypoint: history_panel_8
     summary: 通过环形展线回顾计算、通信与智能技术的发展脉络。
@@ -20,6 +22,7 @@ task_units:
 
   - id: vision_hall
     display_name: 计算机视觉展厅
+    aliases: [视觉馆, 视觉展厅, 计算机视觉馆, 视觉区]
     start_waypoint: vision_hall_entry
     end_waypoint: vision_exit
     summary: 介绍机器如何利用摄像头和算法理解图像与环境。
@@ -27,6 +30,7 @@ task_units:
 
   - id: robotics_hall
     display_name: 智能机器人展厅
+    aliases: [机器人馆, 机器人展厅, 机器人区, 智能机器人馆]
     start_waypoint: robotics_entry_approach
     end_waypoint: robotics_loop_close
     summary: 展示机器人感知、决策、规划与执行形成的闭环系统。
@@ -34,6 +38,7 @@ task_units:
 
   - id: time_tunnel
     display_name: 时空科技隧道
+    aliases: [时空隧道, 隧道, 科技隧道, 沉浸通道]
     start_waypoint: hidden_door_approach
     end_waypoint: hidden_door_exit
     summary: 通过隐藏通道串联沉浸式科技体验与下一展区。
@@ -41,6 +46,7 @@ task_units:
 
   - id: dance_hall
     display_name: 科技舞蹈展厅
+    aliases: [舞蹈馆, 舞蹈展厅, 科技舞蹈馆, 数字艺术馆]
     start_waypoint: dance_inside
     end_waypoint: dance_semi_open_exit
     summary: 展示机器人控制、群体协作与数字艺术的结合。
@@ -48,6 +54,7 @@ task_units:
 
   - id: lounge
     display_name: 智能休息服务区
+    aliases: [休息区, 休息室, 咖啡休息区, 服务区]
     start_waypoint: lounge_top_entry
     end_waypoint: guide_destination
     summary: 引导游客进入休息区，并与咖啡配送机器人完成服务衔接。

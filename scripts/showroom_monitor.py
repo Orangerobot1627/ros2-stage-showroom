@@ -41,6 +41,10 @@ class RobotState:
         self.recovery_state = 'READY'
         self.mission_started_at = None
         self.last_event = None
+        self.local_planner = {
+            'state': 'TRACKING', 'active': False,
+            'avoidance_count': 0,
+        }
 
     @staticmethod
     def event_time(event, fallback):
@@ -89,6 +93,18 @@ class RobotState:
             self.obstacle_detected = False
             self.navigation_state = 'NAVIGATING'
             self.recovery_state = 'RESUMED_AFTER_CLEARANCE'
+        elif event_type == 'avoidance_started':
+            self.navigation_state = 'AVOIDING'
+            self.obstacle_detected = True
+            self.recovery_state = 'LOCAL_BYPASS'
+            self.local_planner = event.get(
+                'local_planner', self.local_planner)
+        elif event_type == 'obstacle_bypassed':
+            self.navigation_state = 'NAVIGATING'
+            self.obstacle_detected = False
+            self.recovery_state = 'REJOINED_ROUTE'
+            self.local_planner = event.get(
+                'local_planner', self.local_planner)
         elif event_type == 'route_paused':
             self.navigation_state = 'PAUSED'
         elif event_type == 'route_resumed':
@@ -114,6 +130,9 @@ class RobotState:
         clearance = status.get('front_clearance_m')
         if isinstance(clearance, (int, float)):
             self.front_clearance = float(clearance)
+        local_planner = status.get('local_planner')
+        if isinstance(local_planner, dict):
+            self.local_planner = local_planner
 
         was_blocked = self.navigation_state == 'BLOCKED'
         if status.get('blocked'):
@@ -133,7 +152,12 @@ class RobotState:
             self.obstacle_detected = False
         elif status.get('active'):
             self.blocked_since = None
-            self.navigation_state = 'NAVIGATING'
+            self.navigation_state = (
+                'AVOIDING' if self.local_planner.get('active')
+                else 'NAVIGATING')
+            if self.local_planner.get('active'):
+                self.obstacle_detected = True
+                self.recovery_state = 'LOCAL_BYPASS'
             if was_blocked:
                 self.recovery_state = 'RESUMED_AFTER_CLEARANCE'
                 self.last_event = 'navigation_status:cleared'
@@ -169,8 +193,9 @@ class RobotState:
             'last_blocked_duration_sec': round(
                 self.last_blocked_duration, 3),
             'block_count': self.block_count,
-            'recovery_policy': 'STOP_AND_RESUME_WHEN_CLEAR',
+            'recovery_policy': 'LOCAL_BYPASS_THEN_STOP_IF_UNSAFE',
             'recovery_state': self.recovery_state,
+            'local_planner': self.local_planner,
             'last_event': self.last_event,
         }
 

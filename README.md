@@ -24,6 +24,8 @@ Windows 本地模型服务的 LLM 桥接层。Nav2、语音和视觉能力将在
 - 可选 Nav2 `NavigateThroughPoses` 适配器，保持业务层与导航后端解耦
 - 可选的本地 LLM 桥接层，支持 Qwen 的 Ollama 和 OpenAI 兼容 HTTP 接口
 - 本地 Whisper 中文语音识别和 Piper 中文语音合成，支持半双工防回声
+- 两台机器人共享全馆语义路网，支持任意展区饮料配送与服务专用最短路径
+- 支持跳过指定场馆、只参观指定场馆，以及 Stage 雷达局部绕障和路线回归
 - Stage GUI 路线标记、无界面运行模式和机器人位置重置服务
 - 可供 Nav2 使用的占据栅格地图
 - 不依赖 ROS 的地图、配置和路线净空校验工具
@@ -291,6 +293,9 @@ llm_model:=qwen3.5:4b
 语音层使用 PipeWire、faster-whisper 和 Piper，并复用现有的 `/showroom/user_text` 与
 `/showroom/assistant_text`，不会改变 LLM 和机器人业务接口。完整说明见
 [docs/VOICE_INTEGRATION.md](docs/VOICE_INTEGRATION.md)。
+
+指定场馆配送、导览筛选和 Stage 局部绕障见
+[docs/SEMANTIC_ROUTING_AND_AVOIDANCE.md](docs/SEMANTIC_ROUTING_AND_AVOIDANCE.md)。
 
 启用真实语音：
 

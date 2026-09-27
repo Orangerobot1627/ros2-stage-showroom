@@ -12,6 +12,16 @@ connectors:
   - {from: lounge_delivery_approach, to: lounge_side_entry}
   - {from: lounge_delivery, to: lounge_sofa_area}
 
+  # Map-validated transit shortcuts. The service robot uses these corridors to
+  # avoid circling every display island while delivering to a named hall. The
+  # guide route keeps the complete exhibit loops.
+  - {from: coffee_south_east, to: history_panel_3, allowed_robots: [robot_1]}
+  - {from: vision_hall_entry, to: vision_loop_close, allowed_robots: [robot_1]}
+  - {from: vision_loop_close, to: vision_exit, allowed_robots: [robot_1]}
+  - {from: robotics_entry_approach, to: robotics_loop_close, allowed_robots: [robot_1]}
+  - {from: robotics_entry_approach, to: hidden_door_approach, allowed_robots: [robot_1]}
+  - {from: dance_inside, to: dance_exit_approach, allowed_robots: [robot_1]}
+
 service:
   standby: coffee_robot_standby
   pickup: coffee_pickup
@@ -31,4 +41,3 @@ cost_profiles:
   shortest:
     distance_weight: 1.0
     connector_penalty: 0.0
-

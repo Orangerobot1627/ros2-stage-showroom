@@ -25,6 +25,7 @@ from showroom_llm_prompt import (  # noqa: E402
     compact_context,
     ground_explanation_result,
     normalize_multi_task_result,
+    normalize_semantic_result,
 )
 
 
@@ -112,6 +113,39 @@ def main():
         {
             'action': 'deliver_drink',
             'drink': 'water',
+            'target': 'vision_hall',
+        },
+    ]
+    semantic = normalize_semantic_result(
+        {'intent': 'chat'}, '机器人馆不看了，跳过吧')
+    assert command_from_result(validate_model_result(semantic)) == {
+        'intent': 'skip_task', 'tasks': ['robotics_hall']}
+    semantic = normalize_semantic_result(
+        {'intent': 'chat'}, '我只看视觉馆和舞蹈馆')
+    assert command_from_result(validate_model_result(semantic)) == {
+        'intent': 'visit_only',
+        'tasks': ['vision_hall', 'dance_hall'],
+    }
+    semantic = normalize_semantic_result(
+        {'intent': 'request_coffee'}, '送一杯咖啡到机器人馆')
+    assert command_from_result(validate_model_result(semantic)) == {
+        'intent': 'deliver_drink',
+        'drink': 'coffee',
+        'target': 'robotics_hall',
+    }
+    semantic = normalize_semantic_result(
+        {'intent': 'chat'}, '蓝色机器人绕过障碍')
+    assert command_from_result(validate_model_result(semantic)) == {
+        'intent': 'robot_action',
+        'robot': 'guide',
+        'action': 'bypass_obstacle',
+    }
+    semantic = normalize_semantic_result(
+        {'intent': 'chat'}, '我只看视觉馆，并送一杯咖啡到视觉馆')
+    assert validate_model_result(semantic)['plan'] == [
+        {'action': 'visit_only', 'tasks': ['vision_hall']},
+        {
+            'action': 'deliver_drink', 'drink': 'coffee',
             'target': 'vision_hall',
         },
     ]
