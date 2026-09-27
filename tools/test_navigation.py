@@ -8,11 +8,11 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
-from showroom_nav2_adapter import semantic_targets_from_plan  # noqa: E402
 from showroom_navigation import (  # noqa: E402
     build_delivery_plan,
     build_guide_plan,
     GraphRoutePlanner,
+    semantic_targets_from_plan,
 )
 from showroom_task_units import TaskUnitCatalog  # noqa: E402
 

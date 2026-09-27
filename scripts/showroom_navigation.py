@@ -9,6 +9,43 @@ from pathlib import Path
 import yaml
 
 
+DELIVERY_PHASES = ('pickup', 'delivery', 'standby')
+
+
+def semantic_targets_from_plan(document):
+    """Reduce a graph delivery path to the service stops Nav2 must reach."""
+    waypoints = document.get('waypoints') or []
+    if not isinstance(waypoints, list) or not 1 <= len(waypoints) <= 256:
+        raise ValueError('Nav2 plan needs 1..256 waypoints')
+    if document.get('request_type') != 'delivery':
+        raise ValueError('Nav2 adapter currently supports delivery plans')
+    targets = []
+    for item in waypoints:
+        if not isinstance(item, dict):
+            raise ValueError('Nav2 waypoint must be an object')
+        phase = item.get('mission_phase')
+        if phase not in DELIVERY_PHASES:
+            continue
+        try:
+            x = float(item['x'])
+            y = float(item['y'])
+        except (KeyError, TypeError, ValueError) as exception:
+            raise ValueError('Nav2 target needs numeric x/y') from exception
+        if not math.isfinite(x) or not math.isfinite(y):
+            raise ValueError('Nav2 target coordinates must be finite')
+        targets.append({
+            'x': x,
+            'y': y,
+            'label': str(item.get('label') or phase),
+            'mission_phase': phase,
+        })
+    phases = tuple(item['mission_phase'] for item in targets)
+    if phases != DELIVERY_PHASES:
+        raise ValueError(
+            'Delivery plan must contain pickup, delivery and standby stops')
+    return targets
+
+
 class NavigationError(ValueError):
     """Raised when a named navigation request cannot be planned safely."""
 
