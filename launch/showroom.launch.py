@@ -7,7 +7,11 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, RegisterEventHandler, Shutdown
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
-from launch.substitutions import EnvironmentVariable, LaunchConfiguration
+from launch.substitutions import (
+    EnvironmentVariable,
+    LaunchConfiguration,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -43,6 +47,7 @@ def generate_launch_description():
     ros_domain_id = LaunchConfiguration('ros_domain_id')
     guide_start_delay = LaunchConfiguration('guide_start_delay_sec')
     coffee_start_delay = LaunchConfiguration('coffee_start_delay_sec')
+    navigation_backend = LaunchConfiguration('navigation_backend')
 
     stage_node = Node(
         package='stage_ros2',
@@ -159,6 +164,11 @@ def generate_launch_description():
             description=(
                 'Autonomous-mode delay before robot_1 starts; task-manager '
                 'start commands bypass this delay.')),
+        DeclareLaunchArgument(
+            'navigation_backend', default_value='stage_graph',
+            description=(
+                'Semantic navigation backend: stage_graph or nav2. Nav2 '
+                'requires a running namespaced Nav2 stack.')),
 
         stage_node,
         RegisterEventHandler(
@@ -200,6 +210,44 @@ def generate_launch_description():
                 'ROS_DOMAIN_ID': ros_domain_id,
             },
             parameters=[{'use_sim_time': True}],
+        ),
+
+        Node(
+            package='demo_stage',
+            executable='showroom_navigation_gateway.py',
+            name='showroom_navigation_gateway',
+            output='screen',
+            condition=IfCondition(business_mode),
+            additional_env={
+                'ROS_AUTOMATIC_DISCOVERY_RANGE': 'LOCALHOST',
+                'ROS_DOMAIN_ID': ros_domain_id,
+            },
+            parameters=[{
+                'use_sim_time': True,
+                'backend': navigation_backend,
+            }],
+        ),
+
+        Node(
+            package='demo_stage',
+            executable='showroom_nav2_adapter.py',
+            namespace='robot_1',
+            name='showroom_nav2_adapter',
+            output='screen',
+            condition=IfCondition(PythonExpression([
+                "'", business_mode, "'.lower() == 'true' and '",
+                navigation_backend, "' == 'nav2'",
+            ])),
+            additional_env={
+                'ROS_AUTOMATIC_DISCOVERY_RANGE': 'LOCALHOST',
+                'ROS_DOMAIN_ID': ros_domain_id,
+            },
+            parameters=[{
+                'use_sim_time': True,
+                'robot_id': 'robot_1',
+                'action_name': 'navigate_through_poses',
+                'frame_id': 'map',
+            }],
         ),
 
         Node(
@@ -294,7 +342,10 @@ def generate_launch_description():
             namespace='robot_1',
             name='coffee_route_follower',
             output='screen',
-            condition=IfCondition(auto_drive),
+            condition=IfCondition(PythonExpression([
+                "'", auto_drive, "'.lower() == 'true' and '",
+                navigation_backend, "' == 'stage_graph'",
+            ])),
             additional_env={
                 'ROS_AUTOMATIC_DISCOVERY_RANGE': 'LOCALHOST',
                 'ROS_DOMAIN_ID': ros_domain_id,

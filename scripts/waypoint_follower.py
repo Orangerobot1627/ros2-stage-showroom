@@ -60,8 +60,9 @@ class WaypointFollower(Node):
             available = ', '.join(sorted(document.get('routes', {}).keys()))
             raise KeyError(f'Unknown route {route_name!r}; available routes: {available}')
 
-        self.waypoints = route['waypoints']
-        if not self.waypoints:
+        self.default_waypoints = [dict(item) for item in route['waypoints']]
+        self.waypoints = [dict(item) for item in self.default_waypoints]
+        if not self.default_waypoints:
             raise ValueError(f'Route {route_name!r} contains no waypoints')
 
         self.route_name = route_name
@@ -88,6 +89,8 @@ class WaypointFollower(Node):
         self.blocked_since = None
         self.last_blocked_duration = 0.0
         self.block_count = 0
+        self.dynamic_path = False
+        self.mission_context = {}
         self.start_time = self.get_clock().now()
         # start_delay_sec is only for autonomous startup. A task-manager start
         # command is itself the scheduling decision and must take effect now.
@@ -144,6 +147,7 @@ class WaypointFollower(Node):
             'route': self.route_name,
             'stamp': self.get_clock().now().nanoseconds / 1e9,
         }
+        document.update(self.mission_context)
         document.update(fields)
         message = String()
         message.data = json.dumps(
@@ -182,6 +186,9 @@ class WaypointFollower(Node):
             'block_count': self.block_count,
             'front_clearance_m': clearance,
             'target_waypoint': target,
+            'dynamic_path': self.dynamic_path,
+            'mission_id': self.mission_context.get('mission_id'),
+            'service_target': self.mission_context.get('service_target'),
         }
         message = String()
         message.data = json.dumps(
@@ -201,6 +208,9 @@ class WaypointFollower(Node):
 
         action = document.get('action')
         if action == 'start':
+            self.waypoints = [dict(item) for item in self.default_waypoints]
+            self.dynamic_path = False
+            self.mission_context = {}
             self.index = 0
             self.finished = False
             self.active = True
@@ -212,6 +222,43 @@ class WaypointFollower(Node):
             self.publish_navigation_status()
             self.get_logger().info(
                 f'Started route {self.route_name!r} by task command')
+        elif action == 'follow_path':
+            try:
+                waypoints = self.validate_dynamic_path(
+                    document.get('waypoints'))
+            except ValueError as exception:
+                self.get_logger().warning(
+                    f'Rejected dynamic path: {exception}')
+                self.publish_event(
+                    'route_command_rejected', action='follow_path',
+                    reason=str(exception),
+                    mission_id=document.get('mission_id'))
+                return
+            self.waypoints = waypoints
+            self.dynamic_path = True
+            self.mission_context = {
+                key: document.get(key)
+                for key in ('mission_id', 'service_target', 'beverage')
+                if document.get(key) is not None
+            }
+            self.index = 0
+            self.finished = False
+            self.active = True
+            self.blocked = False
+            self.blocked_since = None
+            self.start_time = self.get_clock().now()
+            self.activation_delay = 0.0
+            self.publish_stop()
+            self.publish_event(
+                'route_started', dynamic_path=True,
+                total=len(self.waypoints),
+                distance_m=document.get('distance_m'),
+                cost=document.get('cost'),
+                cost_profile=document.get('cost_profile'))
+            self.publish_navigation_status()
+            self.get_logger().info(
+                f'Started optimized path {self.mission_context.get("mission_id")!r} '
+                f'with {len(self.waypoints)} waypoints')
         elif action == 'pause' and not self.finished:
             self.active = False
             self.publish_stop()
@@ -265,6 +312,37 @@ class WaypointFollower(Node):
             self.publish_navigation_status()
             self.get_logger().info(f'Cancelled route {self.route_name!r}')
 
+    @staticmethod
+    def validate_dynamic_path(waypoints):
+        """Validate an internal planned path before it reaches motion control."""
+        if not isinstance(waypoints, list) or not 1 <= len(waypoints) <= 256:
+            raise ValueError('waypoints must contain 1..256 items')
+        validated = []
+        previous = None
+        allowed_metadata = {
+            'mission_id', 'service_target', 'beverage', 'mission_phase'}
+        for index, item in enumerate(waypoints):
+            if not isinstance(item, dict):
+                raise ValueError(f'waypoint {index} must be an object')
+            try:
+                x = float(item['x'])
+                y = float(item['y'])
+            except (KeyError, TypeError, ValueError) as exception:
+                raise ValueError(
+                    f'waypoint {index} needs numeric x/y') from exception
+            label = str(item.get('label', '')).strip()
+            if not math.isfinite(x) or not math.isfinite(y) or not label:
+                raise ValueError(f'waypoint {index} is invalid')
+            if previous is not None and math.hypot(
+                    x - previous['x'], y - previous['y']) > 12.0:
+                raise ValueError(f'waypoint segment {index - 1}->{index} is too long')
+            waypoint = {'x': x, 'y': y, 'label': label}
+            waypoint.update({
+                key: item[key] for key in allowed_metadata if key in item})
+            validated.append(waypoint)
+            previous = waypoint
+        return validated
+
     def pose_callback(self, message):
         q = message.pose.pose.orientation
         yaw = math.atan2(
@@ -316,6 +394,7 @@ class WaypointFollower(Node):
                 label=label,
                 index=self.index + 1,
                 total=len(self.waypoints),
+                mission_phase=target.get('mission_phase'),
             )
             self.index += 1
             if self.index >= len(self.waypoints):

@@ -2,6 +2,7 @@
 """Static validation for demo_stage assets; does not require a ROS installation."""
 
 import ast
+import math
 from pathlib import Path
 import re
 from types import SimpleNamespace
@@ -80,7 +81,37 @@ def main():
         raise ValueError(f'Unexpected PGM header: {header!r}')
 
     generator = load_generator()
-    generator.validate_routes(generator.build_map())
+    raster = generator.build_map()
+    generator.validate_routes(raster)
+
+    if yaml is not None:
+        graph = yaml.safe_load((
+            ROOT / 'config' / 'navigation_graph.yaml').read_text(
+                encoding='utf-8'))
+        routes = yaml.safe_load((
+            ROOT / 'config' / 'routes.yaml').read_text(
+                encoding='utf-8'))['routes']
+        labels = {}
+        for route_name in graph['route_sources']:
+            for waypoint in routes[route_name]['waypoints']:
+                labels[waypoint['label']] = (
+                    float(waypoint['x']), float(waypoint['y']))
+        sample_angles = [2.0 * math.pi * i / 24.0 for i in range(24)]
+        for connector in graph.get('connectors') or []:
+            start = labels[connector['from']]
+            goal = labels[connector['to']]
+            for x, y in generator.interpolate(start, goal):
+                samples = [(x, y)] + [
+                    (
+                        x + 0.42 * math.cos(angle),
+                        y + 0.42 * math.sin(angle),
+                    )
+                    for angle in sample_angles
+                ]
+                if any(raster.occupied(sx, sy) for sx, sy in samples):
+                    raise RuntimeError(
+                        'Navigation connector clearance failed: '
+                        f'{connector["from"]}->{connector["to"]}')
 
     print(f'Python syntax OK: {len(python_files)} files')
     yaml_mode = 'PyYAML parse' if yaml is not None else 'basic structure'
@@ -90,6 +121,7 @@ def main():
     print(f'Stage route marker count: {marker_count}')
     print('package.xml and 1000x700 PGM header: OK')
     print('Route clearance (0.42 m): OK')
+    print('Navigation connector clearance (0.42 m): OK')
 
 
 if __name__ == '__main__':

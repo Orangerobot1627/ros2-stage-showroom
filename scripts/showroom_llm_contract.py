@@ -4,6 +4,8 @@
 import json
 import re
 
+from showroom_plan import PlanError, validate_plan
+
 
 COMMAND_INTENTS = {
     'start_tour',
@@ -18,6 +20,7 @@ COMMAND_INTENTS = {
     'next_task',
     'explain_current',
     'explain_more',
+    'execute_plan',
 }
 NON_COMMAND_INTENTS = {'ask_status', 'chat'}
 ALLOWED_INTENTS = COMMAND_INTENTS | NON_COMMAND_INTENTS
@@ -26,6 +29,9 @@ INTENT_ALIASES = {
     'stop_tour': 'cancel_all',
     'status': 'ask_status',
     'robot_status': 'ask_status',
+    'plan': 'execute_plan',
+    'multi_task': 'execute_plan',
+    'multi_task_plan': 'execute_plan',
 }
 DEFAULT_REPLIES = {
     'start_tour': '已提交导览任务请求。',
@@ -40,6 +46,7 @@ DEFAULT_REPLIES = {
     'next_task': '好的，现在进入下一个导览任务。',
     'explain_current': '我来介绍当前展区。',
     'explain_more': '我再详细介绍一下当前展区。',
+    'execute_plan': '已生成并提交多步骤服务计划。',
     'ask_status': '我已经读取当前任务状态，请查看机器人运行信息。',
     'chat': '我目前可以帮助您开始、暂停或继续导览，也可以安排咖啡服务。',
 }
@@ -79,6 +86,8 @@ def extract_json_object(text):
 def validate_model_result(document):
     """Normalize and validate one model-produced intent document."""
     intent = document.get('intent')
+    if intent is None and isinstance(document.get('plan'), list):
+        intent = 'execute_plan'
     if not isinstance(intent, str):
         raise LLMOutputError('模型结果缺少字符串 intent')
     intent = INTENT_ALIASES.get(intent.strip().lower(), intent.strip().lower())
@@ -146,6 +155,11 @@ def validate_model_result(document):
     if intent in ('explain_current', 'explain_more'):
         if not model_supplied_reply:
             raise LLMOutputError(f'{intent} 必须包含基于当前任务的 reply')
+    if intent == 'execute_plan':
+        try:
+            result['plan'] = validate_plan(document.get('plan'))
+        except PlanError as exception:
+            raise LLMOutputError(str(exception)) from exception
     return result
 
 
@@ -165,4 +179,6 @@ def command_from_result(result):
         })
         if 'duration_sec' in result:
             command['duration_sec'] = result['duration_sec']
+    if result['intent'] == 'execute_plan':
+        command['plan'] = result['plan']
     return command

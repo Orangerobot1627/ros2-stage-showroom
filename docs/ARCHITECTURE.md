@@ -16,7 +16,10 @@ showroom LLM bridge ─────► /showroom/assistant_text
         ▼
 showroom task manager
         │ action policy + renewable human override lease
-        │ /showroom/route_commands
+        │ plan executor + /showroom/navigation_requests
+        ▼
+semantic navigation gateway
+        │ Stage optimized path or Nav2 plan
         ▼
 reference waypoint followers ─────► /showroom/robot_events
         │                                   │
@@ -46,6 +49,12 @@ Stage world/models
 导览路线同时由 `showroom_task_units.py` 映射为语义任务单元。游客的跳过、重复和追问
 针对任务单元执行，不直接操作坐标或任意航点索引。这一层也是后续 multi-step plan
 executor 使用的稳定任务接口。
+
+多任务层使用最多 8 步的封闭 action 集合。`SequentialPlanExecutor` 保存步骤状态，并在
+配送等异步步骤上等待带同一 `mission_id` 的机器人事件。导航网关从业务层接收命名任务
+地点，在 `navigation_graph.yaml` 上计算最短路径；当前 Stage 后端执行动态航点，Nav2
+适配器可把同一计划转换为 `NavigateThroughPoses`。具体协议和参考项目见
+`docs/MULTI_TASK_PLANNING.md`。
 
 LLM 层内部继续按职责拆分：`showroom_ollama_client` 只处理 HTTP 和
 `message.content`，`showroom_llm_prompt` 负责提示词与状态裁剪，

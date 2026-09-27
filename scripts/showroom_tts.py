@@ -30,6 +30,8 @@ class ShowroomTTS(Node):
             'assistant_topic', '/showroom/assistant_text')
         self.declare_parameter('say_topic', '/showroom/voice/say')
         self.declare_parameter(
+            'announcement_topic', '/showroom/announcements')
+        self.declare_parameter(
             'speaking_topic', '/showroom/voice/speaking')
         self.declare_parameter('status_topic', '/showroom/voice/tts_status')
 
@@ -48,6 +50,9 @@ class ShowroomTTS(Node):
         self.create_subscription(
             String, self.get_parameter('say_topic').value,
             self.say_callback, 10)
+        self.create_subscription(
+            String, self.get_parameter('announcement_topic').value,
+            self.announcement_callback, 10)
 
         self.requests = queue.Queue(maxsize=4)
         self.stopping = threading.Event()
@@ -102,6 +107,18 @@ class ShowroomTTS(Node):
     def say_callback(self, message):
         """Speak text sent directly to the diagnostic say topic."""
         self.enqueue(message.data)
+
+    def announcement_callback(self, message):
+        """Speak a validated announcement produced by a completed plan step."""
+        try:
+            document = json.loads(message.data)
+        except json.JSONDecodeError:
+            return
+        if isinstance(document, dict):
+            self.enqueue(
+                str(document.get('text', '')),
+                request_id=document.get('plan_id'),
+                intent='announce')
 
     def playback_command(self, wav_path):
         """Build a PipeWire playback command for one WAV file."""

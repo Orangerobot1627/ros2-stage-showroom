@@ -2,6 +2,56 @@
 """Prompt and compact context configuration for the showroom intent model."""
 
 import json
+import re
+
+
+def normalize_multi_task_result(document, user_text):
+    """Repair common small-model omissions for stay-and-drink requests."""
+    if not isinstance(document, dict):
+        return document
+    text = str(user_text)
+    stay_request = any(word in text for word in (
+        '多待', '多呆', '停留', '待一会', '呆一会', '再看看', '多看一会'))
+    drink_request = any(word in text for word in (
+        '饮料', '咖啡', '水', '果汁'))
+    if not (stay_request and drink_request):
+        return document
+
+    duration_match = re.search(r'(\d+(?:\.\d+)?)\s*秒', text)
+    pause = {'action': 'pause', 'robot': 'guide'}
+    if duration_match:
+        pause['duration_sec'] = float(duration_match.group(1))
+    drink = 'coffee'
+    if '果汁' in text:
+        drink = 'juice'
+    elif re.search(r'(?:一杯|杯|送|来)[^，。]{0,4}水', text):
+        drink = 'water'
+    place_aliases = (
+        (('视觉',), 'vision_hall'),
+        (('机器人馆', '机器人展厅'), 'robotics_hall'),
+        (('历史',), 'technology_history'),
+        (('隧道',), 'time_tunnel'),
+        (('舞蹈',), 'dance_hall'),
+        (('休息',), 'lounge'),
+        (('入口',), 'reception'),
+    )
+    target = 'current_task'
+    for aliases, task_id in place_aliases:
+        if any(alias in text for alias in aliases):
+            target = task_id
+            break
+    return {
+        'intent': 'execute_plan',
+        'plan': [
+            pause,
+            {
+                'action': 'deliver_drink',
+                'drink': drink,
+                'target': target,
+            },
+        ],
+        'reply': document.get('reply', ''),
+    }
 
 
 def ground_explanation_result(document, business):
@@ -78,6 +128,12 @@ def build_messages(user_text, business=None, monitor=None, knowledge=None):
 - next_task：正常结束当前内容并进入下一个任务单元
 - explain_current：讲解 current_task，必须用 summary 生成 reply
 - explain_more：追问当前内容，必须用 detail 生成更详细的 reply
+- execute_plan：一句话同时包含多个任务时使用。plan 是 2..8 个 action 的数组
+  - pause：robot 为 guide、coffee 或 all，可带 duration_sec
+  - resume：robot 为 guide、coffee 或 all
+  - deliver_drink：drink 为 coffee、water、juice 或 drink；target 默认 current_task
+  - skip_current、repeat_current、next_task
+  - announce：必须带 text
 - ask_status：询问机器人位置、进度、障碍或任务状态
 - chat：不属于上述业务命令
 
@@ -91,8 +147,10 @@ def build_messages(user_text, business=None, monitor=None, knowledge=None):
 重新执行当前展区：{{"intent":"repeat_current"}}
 讲解当前展区：{{"intent":"explain_current","reply":"根据 current_task.summary 生成的讲解"}}
 深入讲解：{{"intent":"explain_more","reply":"根据 current_task.detail 生成的补充讲解"}}
+多任务示例：{{"intent":"execute_plan","plan":[{{"action":"pause","robot":"guide","duration_sec":20}},{{"action":"deliver_drink","drink":"coffee","target":"current_task"}}]}}
 除 explain_current 和 explain_more 外，reply 字段不是必需的。
 讲解只能使用当前状态中的 current_task 内容，不得编造展品、数字或能力。
+同一句话有两个及以上明确动作时，必须使用 execute_plan，不要只返回其中一个 intent。
 
 展馆资料：{knowledge_text}
 当前系统状态：{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}

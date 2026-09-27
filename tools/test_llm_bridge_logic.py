@@ -24,6 +24,7 @@ from showroom_llm_prompt import (  # noqa: E402
     build_messages,
     compact_context,
     ground_explanation_result,
+    normalize_multi_task_result,
 )
 
 
@@ -99,6 +100,21 @@ def main():
         {'current_task': {'summary': '配置中的讲解。'}},
     )
     assert grounded_override['reply'] == '配置中的讲解。'
+    repaired = normalize_multi_task_result({
+        'intent': 'robot_action',
+        'robot': 'coffee',
+        'action': 'deliver_drink',
+    }, '我想在视觉馆多待30秒，送杯水来')
+    repaired = validate_model_result(repaired)
+    assert repaired['intent'] == 'execute_plan'
+    assert repaired['plan'] == [
+        {'action': 'pause', 'robot': 'guide', 'duration_sec': 30.0},
+        {
+            'action': 'deliver_drink',
+            'drink': 'water',
+            'target': 'vision_hall',
+        },
+    ]
 
     robot_action = validate_model_result({
         'intent': 'robot_action',
@@ -120,6 +136,24 @@ def main():
         'intent': 'explain_current'}
     assert command_from_result(validate_model_result({
         'intent': 'skip_current'})) == {'intent': 'skip_current'}
+    multi = validate_model_result({
+        'intent': 'plan',
+        'plan': [
+            {'action': 'pause_tour', 'duration_sec': 25},
+            {'action': 'request_drink', 'target': 'current_task'},
+        ],
+    })
+    assert command_from_result(multi) == {
+        'intent': 'execute_plan',
+        'plan': [
+            {'action': 'pause', 'robot': 'guide', 'duration_sec': 25.0},
+            {
+                'action': 'deliver_drink',
+                'drink': 'coffee',
+                'target': 'current_task',
+            },
+        ],
+    }
 
     result = infer_with_mock('开始导览，不需要咖啡')
     assert result == {
@@ -139,6 +173,10 @@ def main():
     assert infer_with_mock('下个展区')['intent'] == 'next_task'
     assert infer_with_mock('详细讲讲为什么它能避障')['intent'] == (
         'explain_more')
+    planned = infer_with_mock('我想在这个展馆多呆30秒，再送杯饮料来')
+    assert planned['intent'] == 'execute_plan'
+    assert planned['plan'][0]['duration_sec'] == 30.0
+    assert planned['plan'][1]['action'] == 'deliver_drink'
     assert infer_with_mock('绿色机器人暂停10秒') == {
         'intent': 'robot_action',
         'reply': '绿色服务机器人将等待 10 秒，随后自动恢复原来的任务。',
@@ -170,6 +208,7 @@ def main():
     system_prompt = build_messages('你好')[0]['content']
     assert '绝不能生成速度、坐标或 cmd_vel 指令' in system_prompt
     assert 'skip_current' in system_prompt
+    assert 'execute_plan' in system_prompt
     messages = [{'role': 'user', 'content': '你好'}]
     openai_backend = StubOpenAIBackend('http://unused', 'qwen-test')
     assert json.loads(openai_backend.complete(messages))['intent'] == 'chat'

@@ -81,6 +81,7 @@ class TaskUnitCatalog:
         self.route_name = route_name
         self.waypoint_labels = labels
         self.units = units
+        self.units_by_id = {unit.task_id: unit for unit in units}
 
     @classmethod
     def from_files(cls, task_path, route_path):
@@ -105,6 +106,13 @@ class TaskUnitCatalog:
             if unit.start_index <= route_index <= unit.end_index:
                 return index
         raise TaskUnitError(f'Route index is outside task units: {route_index}')
+
+    def unit_for_id(self, task_id):
+        """Return one configured semantic task by id."""
+        try:
+            return self.units_by_id[str(task_id)]
+        except KeyError as exception:
+            raise TaskUnitError(f'未知导览任务：{task_id!r}') from exception
 
 
 class TaskUnitTracker:

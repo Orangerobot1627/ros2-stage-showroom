@@ -108,6 +108,30 @@ def main():
         ('robot_1', 'start', 'coffee_delivery_route')]
     assert logic.coffee_state == 'TO_PICKUP'
 
+    dynamic = BusinessLogic()
+    dynamic.begin_delivery('vision_hall', 'coffee')
+    assert dynamic.snapshot()['coffee_target'] == 'vision_hall'
+    assert dynamic.coffee_state == 'TO_PICKUP'
+    dynamic.handle_event({
+        'type': 'waypoint_reached', 'robot_id': 'robot_1',
+        'label': 'coffee_pickup', 'mission_phase': 'pickup'})
+    assert dynamic.coffee_state == 'PICKUP'
+    dynamic.handle_event({
+        'type': 'waypoint_reached', 'robot_id': 'robot_1',
+        'label': 'coffee_departure', 'mission_phase': 'depart_pickup'})
+    assert dynamic.coffee_state == 'DELIVERING'
+    dynamic.handle_event({
+        'type': 'waypoint_reached', 'robot_id': 'robot_1',
+        'label': 'vision_inside', 'mission_phase': 'delivery'})
+    assert dynamic.coffee_state == 'DELIVERED'
+    dynamic.handle_event({
+        'type': 'waypoint_reached', 'robot_id': 'robot_1',
+        'label': 'vision_hall_entry', 'mission_phase': 'returning'})
+    assert dynamic.coffee_state == 'RETURNING'
+    dynamic.handle_event({
+        'type': 'route_completed', 'robot_id': 'robot_1'})
+    assert dynamic.coffee_state == 'RETURNED'
+
     print('Business state-machine scenarios: OK')
 
 

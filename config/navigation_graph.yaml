@@ -1,0 +1,34 @@
+version: 1
+frame_id: world
+
+# The Stage backend builds a bidirectional graph from already validated route
+# segments. Connectors join the guide and service networks at known open areas.
+route_sources:
+  - guide_full_route
+  - coffee_delivery_route
+
+connectors:
+  - {from: coffee_pickup_approach, to: coffee_south_east}
+  - {from: lounge_delivery_approach, to: lounge_side_entry}
+  - {from: lounge_delivery, to: lounge_sofa_area}
+
+service:
+  standby: coffee_robot_standby
+  pickup: coffee_pickup
+
+# A service robot meets visitors at an accessible edge of each task unit. The
+# points deliberately avoid narrow display loops and the hidden tunnel.
+delivery_targets:
+  reception: stairs_clearance
+  technology_history: coffee_south_east
+  vision_hall: vision_inside
+  robotics_hall: robotics_inside
+  time_tunnel: hidden_door_approach
+  dance_hall: dance_inside
+  lounge: lounge_delivery
+
+cost_profiles:
+  shortest:
+    distance_weight: 1.0
+    connector_penalty: 0.0
+

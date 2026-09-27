@@ -40,6 +40,8 @@ class BusinessLogic:
         self.coffee_state = 'STANDBY'
         self.coffee_requested = False
         self.coffee_trigger_reached = False
+        self.coffee_target = None
+        self.beverage = None
         self.blocked_from = {}
         self.paused_from = {}
 
@@ -50,6 +52,8 @@ class BusinessLogic:
             'coffee_requested': self.coffee_requested,
             'coffee_trigger': self.coffee_trigger,
             'coffee_trigger_reached': self.coffee_trigger_reached,
+            'coffee_target': self.coffee_target,
+            'beverage': self.beverage,
         }
 
     @staticmethod
@@ -120,6 +124,8 @@ class BusinessLogic:
             if self.coffee_state in ACTIVE_COFFEE_STATES:
                 raise ValueError('A coffee mission is already active')
             self.coffee_requested = True
+            self.coffee_target = 'lounge'
+            self.beverage = 'coffee'
             self.coffee_state = 'TO_PICKUP'
         else:
             raise ValueError(f'Unknown robot: {robot_id!r}')
@@ -150,6 +156,17 @@ class BusinessLogic:
         return [self.route_command(
             'robot_1', 'start', self.route_for('robot_1'))]
 
+    def begin_delivery(self, target, beverage='coffee'):
+        """Reserve robot_1 for one optimized pickup/dropoff mission."""
+        if self.coffee_state in ACTIVE_COFFEE_STATES:
+            raise ValueError('A drink delivery mission is already active')
+        self.coffee_requested = True
+        self.coffee_target = str(target)
+        self.beverage = str(beverage)
+        self.coffee_state = 'TO_PICKUP'
+        self.paused_from.pop('robot_1', None)
+        self.blocked_from.pop('robot_1', None)
+
     def handle_command(self, message):
         intent = message.get('intent') or message.get('command')
         if intent == 'start_tour':
@@ -158,6 +175,8 @@ class BusinessLogic:
             self.guide_state = 'RECEPTION'
             self.coffee_state = 'STANDBY'
             self.coffee_requested = bool(message.get('coffee', True))
+            self.coffee_target = 'lounge' if self.coffee_requested else None
+            self.beverage = 'coffee' if self.coffee_requested else None
             self.coffee_trigger_reached = False
             self.blocked_from.clear()
             self.paused_from.clear()
@@ -166,6 +185,8 @@ class BusinessLogic:
 
         if intent == 'request_coffee':
             self.coffee_requested = True
+            self.coffee_target = self.coffee_target or 'lounge'
+            self.beverage = self.beverage or 'coffee'
             return self.dispatch_coffee_if_ready()
 
         if intent == 'pause_tour':
@@ -226,6 +247,11 @@ class BusinessLogic:
                 self.coffee_state = 'RETURNED'
             return []
 
+        if event_type in ('route_failed', 'route_command_rejected'):
+            if robot_id == 'robot_1':
+                self.coffee_state = 'FAILED'
+            return []
+
         if event_type != 'waypoint_reached':
             return []
 
@@ -251,13 +277,14 @@ class BusinessLogic:
 
         if robot_id == 'robot_1':
             next_state = None
-            if label == 'coffee_pickup':
+            mission_phase = message.get('mission_phase')
+            if mission_phase == 'pickup' or label == 'coffee_pickup':
                 next_state = 'PICKUP'
-            elif label == 'coffee_departure':
+            elif mission_phase == 'depart_pickup' or label == 'coffee_departure':
                 next_state = 'DELIVERING'
-            elif label == 'lounge_delivery':
+            elif mission_phase == 'delivery' or label == 'lounge_delivery':
                 next_state = 'DELIVERED'
-            elif label == 'return_from_lounge':
+            elif mission_phase == 'returning' or label == 'return_from_lounge':
                 next_state = 'RETURNING'
             if next_state is not None:
                 if self.coffee_state == 'PAUSED':

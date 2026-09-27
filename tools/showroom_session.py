@@ -187,6 +187,17 @@ def render_monitor(document, state):
             f'{robot_name}:{override.get("action", "未知")} '
             f'{override.get("remaining_sec", 0.0):.1f}s')
     override_text = '、'.join(override_parts) if override_parts else '无'
+    plan = business.get('active_plan') or {}
+    plan_state = plan.get('state', 'IDLE')
+    plan_id = plan.get('plan_id') or '无'
+    current_step = plan.get('current_step')
+    step_total = plan.get('step_total', 0)
+    if plan_state == 'IDLE':
+        step_text = '无'
+    elif current_step is None and plan_state == 'SUCCEEDED':
+        step_text = '完成'
+    else:
+        step_text = f'{(current_step or 0) + 1}/{step_total}'
     lines = [
         '科技展馆双机器人运行监控',
         f'会话 {state["session_id"]}  |  Domain {state["domain_id"]}  |  '
@@ -199,6 +210,9 @@ def render_monitor(document, state):
         f'咖啡={COFFEE_STATE_NAMES.get(business.get("coffee_state"), "未知")}  '
         f'配送触发点={chinese_waypoint(business.get("coffee_trigger"))}'
         f'（{trigger_status}）',
+        f'多任务计划: {plan_id}  状态={plan_state}  步骤={step_text}  |  '
+        f'配送目标={business.get("coffee_target") or "无"}  '
+        f'饮料={business.get("beverage") or "无"}',
         f'人工临时接管: {override_text}',
         '',
     ]

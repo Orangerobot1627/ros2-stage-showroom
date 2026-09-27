@@ -27,6 +27,10 @@ jobs:
         run: python tools/test_action_policy.py
       - name: Test semantic task editing
         run: python tools/test_task_units.py
+      - name: Test multi-step plans
+        run: python tools/test_plan.py
+      - name: Test semantic navigation
+        run: python tools/test_navigation.py
       - name: Test LLM command contract
         run: python tools/test_llm_bridge_logic.py
       - name: Test voice core

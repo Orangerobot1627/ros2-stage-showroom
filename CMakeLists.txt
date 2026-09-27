@@ -14,6 +14,8 @@ install(
     scripts/showroom_business_logic.py
     scripts/showroom_llm_bridge.py
     scripts/showroom_monitor.py
+    scripts/showroom_navigation_gateway.py
+    scripts/showroom_nav2_adapter.py
     scripts/showroom_task_manager.py
     scripts/showroom_tts.py
     scripts/waypoint_follower.py
@@ -25,7 +27,9 @@ install(
     scripts/showroom_llm_contract.py
     scripts/showroom_llm_core.py
     scripts/showroom_llm_prompt.py
+    scripts/showroom_navigation.py
     scripts/showroom_ollama_client.py
+    scripts/showroom_plan.py
     scripts/showroom_action_policy.py
     scripts/showroom_task_units.py
     scripts/showroom_voice_core.py
@@ -92,6 +96,20 @@ if(BUILD_TESTING)
   ament_add_test(
     showroom_task_units
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_task_units.py
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+    TIMEOUT 30
+  )
+
+  ament_add_test(
+    showroom_multi_step_plan
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_plan.py
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+    TIMEOUT 30
+  )
+
+  ament_add_test(
+    showroom_navigation
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_navigation.py
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO
     TIMEOUT 30
   )

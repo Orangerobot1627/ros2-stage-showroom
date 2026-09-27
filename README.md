@@ -19,6 +19,9 @@ Windows 本地模型服务的 LLM 桥接层。Nav2、语音和视觉能力将在
 - 根据导览进度派发咖啡任务，避免使用固定时间启动配送
 - 配置驱动的机器人 action、人工临时接管租约和默认任务自动恢复
 - 7 个语义导览任务单元，支持跳过、重复、进入下一任务和上下文讲解
+- 受控多步骤计划、顺序执行状态机和小模型多意图修复
+- 语义导航网关与 Dijkstra 路线优化，支持把饮料送到当前展区
+- 可选 Nav2 `NavigateThroughPoses` 适配器，保持业务层与导航后端解耦
 - 可选的本地 LLM 桥接层，支持 Qwen 的 Ollama 和 OpenAI 兼容 HTTP 接口
 - 本地 Whisper 中文语音识别和 Piper 中文语音合成，支持半双工防回声
 - Stage GUI 路线标记、无界面运行模式和机器人位置重置服务
@@ -46,6 +49,11 @@ demo_stage/
 
 动态任务编辑见 [docs/TASK_EDITING.md](docs/TASK_EDITING.md)。任务边界和讲解资料位于
 `config/task_units.yaml`；LLM 只选择受控 intent，实际航点索引由任务管理器解析和校验。
+
+多任务与导航框架见
+[docs/MULTI_TASK_PLANNING.md](docs/MULTI_TASK_PLANNING.md)。当前默认使用经过地图净空
+校验的 Stage 图导航；Nav2 适配器已提供接口，但需要独立配置定位、TF、Costmap、Planner
+和 Controller 后才能切换为实际 Nav2 控制。
 
 ## 环境要求
 

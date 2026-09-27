@@ -16,6 +16,11 @@ from showroom_action_policy import (
     OverrideLeaseBook,
 )
 from showroom_business_logic import BusinessLogic
+from showroom_plan import (
+    PlanError,
+    SequentialPlanExecutor,
+    validate_plan,
+)
 from showroom_task_units import (
     TaskUnitCatalog,
     TaskUnitError,
@@ -34,6 +39,12 @@ class ShowroomTaskManager(Node):
         self.declare_parameter('route_command_topic', '/showroom/route_commands')
         self.declare_parameter('status_topic', '/showroom/status')
         self.declare_parameter('response_topic', '/showroom/response')
+        self.declare_parameter(
+            'navigation_request_topic', '/showroom/navigation_requests')
+        self.declare_parameter(
+            'navigation_event_topic', '/showroom/navigation_events')
+        self.declare_parameter(
+            'announcement_topic', '/showroom/announcements')
         self.declare_parameter('coffee_trigger', 'tunnel_center_south')
         self.declare_parameter('auto_start', True)
         self.declare_parameter('auto_start_delay_sec', 3.0)
@@ -69,6 +80,9 @@ class ShowroomTaskManager(Node):
             else package_share / 'config' / 'routes.yaml')
         self.task_units = TaskUnitTracker(
             TaskUnitCatalog.from_files(task_path, route_path))
+        self.plan_executor = SequentialPlanExecutor()
+        self.plan_sequence = 0
+        self.robot_locations = {'robot_1': 'coffee_robot_standby'}
         route_qos = QoSProfile(
             depth=10,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -95,6 +109,16 @@ class ShowroomTaskManager(Node):
             self.get_parameter('response_topic').value,
             10,
         )
+        self.navigation_request_publisher = self.create_publisher(
+            String,
+            self.get_parameter('navigation_request_topic').value,
+            route_qos,
+        )
+        self.announcement_publisher = self.create_publisher(
+            String,
+            self.get_parameter('announcement_topic').value,
+            10,
+        )
         self.create_subscription(
             String,
             self.get_parameter('command_topic').value,
@@ -106,6 +130,12 @@ class ShowroomTaskManager(Node):
             self.get_parameter('event_topic').value,
             self.event_callback,
             50,
+        )
+        self.create_subscription(
+            String,
+            self.get_parameter('navigation_event_topic').value,
+            self.navigation_event_callback,
+            20,
         )
         self.create_timer(1.0, self.publish_periodic_status)
         self.create_timer(0.2, self.expire_overrides)
@@ -142,6 +172,13 @@ class ShowroomTaskManager(Node):
                 self.get_logger().info(
                     f'Dispatch {effect["action"]} to '
                     f'{effect["robot_id"]}: {effect["route"]}')
+            elif effect.get('type') == 'navigation_request':
+                self.publish_json(self.navigation_request_publisher, effect)
+                self.get_logger().info(
+                    f'Dispatch navigation mission {effect["mission_id"]} '
+                    f'to {effect["service_target"]}')
+            elif effect.get('type') == 'announcement':
+                self.publish_json(self.announcement_publisher, effect)
 
     def publish_status(self, reason):
         status = self.logic.snapshot()
@@ -153,6 +190,7 @@ class ShowroomTaskManager(Node):
                 self.action_policy.default_duration),
             'override_time_source': 'steady_wall_clock',
             'current_task': self.task_units.snapshot(),
+            'active_plan': self.plan_executor.snapshot(),
         })
         status.update({'type': 'business_status', 'reason': reason})
         self.publish_json(self.status_publisher, status)
@@ -278,6 +316,121 @@ class ShowroomTaskManager(Node):
             detail = f'进入下一任务：{target.display_name}'
         return effects, detail
 
+    def resolve_plan_target(self, target):
+        """Resolve current_task or an explicit safe semantic task id."""
+        if target == 'current_task':
+            unit = self.task_units.current
+            if unit is None:
+                raise PlanError('当前没有可作为配送目标的导览任务')
+            return unit
+        return self.task_units.catalog.unit_for_id(target)
+
+    def execute_plan_action(self, action):
+        """Execute one normalized action and return effects/detail/wait."""
+        action_name = action['action']
+        if action_name == 'pause':
+            self.action_policy.validate_action('pause', action['robot'])
+            robot_ids = self.action_policy.resolve_robots(action['robot'])
+            effects, affected = self.pause_with_lease(
+                robot_ids, action['duration_sec'])
+            return effects, f'paused {affected}', None
+        if action_name == 'resume':
+            self.action_policy.validate_action('resume', action['robot'])
+            robot_ids = self.action_policy.resolve_robots(action['robot'])
+            effects, affected = self.resume_from_override(robot_ids)
+            return effects, f'resumed {affected}', None
+        if action_name in TaskUnitTracker.EDIT_INTENTS:
+            effects, detail = self.execute_task_edit(action_name)
+            return effects, detail, None
+        if action_name == 'announce':
+            effect = {
+                'type': 'announcement',
+                'plan_id': self.plan_executor.plan_id,
+                'text': action['text'],
+            }
+            return [effect], action['text'], None
+        if action_name == 'deliver_drink':
+            unit = self.resolve_plan_target(action['target'])
+            beverage = action['drink']
+            self.logic.begin_delivery(unit.task_id, beverage)
+            mission_id = (
+                f'{self.plan_executor.plan_id}-step-'
+                f'{self.plan_executor.current_index + 1}')
+            effect = {
+                'type': 'navigation_request',
+                'request_type': 'delivery',
+                'robot_id': 'robot_1',
+                'route': self.logic.route_for('robot_1'),
+                'mission_id': mission_id,
+                'start': self.robot_locations.get(
+                    'robot_1', 'coffee_robot_standby'),
+                'service_target': unit.task_id,
+                'beverage': beverage,
+            }
+            wait_for = {
+                'type': 'route_completed',
+                'robot_id': 'robot_1',
+                'mission_id': mission_id,
+            }
+            return [effect], (
+                f'{beverage} delivery to {unit.display_name}'), wait_for
+        raise PlanError(f'未实现 plan action：{action_name!r}')
+
+    def preflight_plan(self, actions):
+        """Resolve resources and semantic targets before mutating robot state."""
+        for action in actions:
+            action_name = action['action']
+            if action_name in ('pause', 'resume'):
+                self.action_policy.validate_action(
+                    action_name, action['robot'])
+                self.action_policy.resolve_robots(action['robot'])
+            elif action_name in TaskUnitTracker.EDIT_INTENTS:
+                if self.logic.state_for('robot_0') not in (
+                        'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
+                        'PAUSED', 'BLOCKED'):
+                    raise PlanError('当前没有可编辑的导览任务')
+            elif action_name == 'deliver_drink':
+                self.resolve_plan_target(action['target'])
+                if self.logic.coffee_state in (
+                        'TO_PICKUP', 'PICKUP', 'DELIVERING', 'DELIVERED',
+                        'RETURNING', 'PAUSED', 'BLOCKED'):
+                    raise PlanError('绿色服务机器人已有配送任务')
+
+    def advance_plan(self):
+        """Run immediate steps until an asynchronous step or completion."""
+        effects = []
+        while self.plan_executor.state == 'RUNNING':
+            action = self.plan_executor.begin_current()
+            try:
+                step_effects, detail, wait_for = self.execute_plan_action(action)
+            except (ActionPolicyError, PlanError, TaskUnitError, ValueError) \
+                    as exception:
+                self.plan_executor.fail(exception)
+                raise
+            effects.extend(step_effects)
+            if wait_for is None:
+                self.plan_executor.complete_current(detail)
+            else:
+                self.plan_executor.wait_current(wait_for, detail)
+                break
+        return effects
+
+    def execute_plan(self, document, source):
+        """Validate and start one bounded multi-step visitor plan."""
+        actions = validate_plan(
+            document.get('plan'),
+            default_pause_sec=self.action_policy.default_duration)
+        self.preflight_plan(actions)
+        self.plan_sequence += 1
+        plan_id = str(document.get('plan_id') or (
+            f'plan-{self.plan_sequence:04d}'))
+        self.plan_executor.start(plan_id, actions, source=source)
+        effects = self.advance_plan()
+        detail = (
+            f'{plan_id} accepted: {len(actions)} steps, '
+            f'state={self.plan_executor.state}')
+        return effects, detail
+
     def execute_command(self, document, source):
         intent = document.get('intent') or document.get('command')
         detail = 'accepted'
@@ -300,9 +453,13 @@ class ShowroomTaskManager(Node):
             effects = []
             detail = self.task_units.explanation(
                 detailed=intent == 'explain_more')
+        elif intent == 'execute_plan':
+            effects, detail = self.execute_plan(document, source)
         else:
             if intent in ('cancel_all', 'reset'):
                 self.override_leases.clear()
+                if self.plan_executor.active:
+                    self.plan_executor.cancel(intent)
             effects = self.logic.handle_command(document)
             if intent == 'start_tour':
                 self.task_units.start()
@@ -352,6 +509,8 @@ class ShowroomTaskManager(Node):
             document = self.parse_message(message)
             event_type = document.get('type')
             robot_id = document.get('robot_id')
+            if robot_id == 'robot_1' and document.get('label'):
+                self.robot_locations['robot_1'] = document['label']
             if event_type in ('route_cancelled', 'route_completed'):
                 self.override_leases.release(robot_id)
             if robot_id == 'robot_0':
@@ -368,6 +527,16 @@ class ShowroomTaskManager(Node):
                 elif event_type == 'route_cancelled':
                     self.task_units.clear()
             effects = self.logic.handle_event(document)
+            mission_id = document.get('mission_id')
+            if (event_type in ('route_failed', 'route_command_rejected')
+                    and self.plan_executor.active
+                    and mission_id
+                    == (self.plan_executor.wait_for or {}).get('mission_id')):
+                self.plan_executor.fail(
+                    document.get('reason', event_type))
+            elif self.plan_executor.observe_event(document):
+                self.robot_locations['robot_1'] = 'coffee_robot_standby'
+                effects.extend(self.advance_plan())
             for effect in effects:
                 if (effect.get('type') == 'route_command'
                         and effect.get('robot_id') == 'robot_1'
@@ -383,6 +552,22 @@ class ShowroomTaskManager(Node):
         except (TaskUnitError, json.JSONDecodeError,
                 TypeError, ValueError) as exception:
             self.get_logger().warning(f'Ignored robot event: {exception}')
+
+    def navigation_event_callback(self, message):
+        """Observe route planning acceptance or rejection."""
+        try:
+            document = self.parse_message(message)
+            if (document.get('type') == 'navigation_rejected'
+                    and self.plan_executor.active
+                    and document.get('mission_id')
+                    == (self.plan_executor.wait_for or {}).get('mission_id')):
+                self.plan_executor.fail(
+                    document.get('reason', 'navigation rejected'))
+            self.publish_status(
+                f'navigation_event:{document.get("type", "unknown")}')
+        except (json.JSONDecodeError, TypeError, ValueError) as exception:
+            self.get_logger().warning(
+                f'Ignored navigation event: {exception}')
 
     def auto_start_callback(self):
         if self.get_clock().now() < self.auto_start_deadline:

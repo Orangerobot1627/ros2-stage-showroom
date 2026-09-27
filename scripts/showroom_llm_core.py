@@ -21,6 +21,7 @@ from showroom_llm_prompt import (
     build_messages,
     compact_context,
     ground_explanation_result,
+    normalize_multi_task_result,
 )
 from showroom_ollama_client import OllamaClient
 
@@ -94,7 +95,26 @@ class MockBackend:
             '绿色', '服务机器人', '咖啡机器人'))
         all_robots = any(word in user_text for word in (
             '两个机器人', '两台机器人', '所有机器人'))
-        if any(word in user_text for word in ('状态', '到哪', '为什么停')):
+        stay_request = any(word in user_text for word in (
+            '多待', '多呆', '停留', '待一会', '呆一会'))
+        drink_request = any(word in user_text for word in (
+            '饮料', '咖啡', '水', '果汁'))
+        if stay_request and drink_request:
+            pause = {'action': 'pause', 'robot': 'guide'}
+            if duration is not None:
+                pause['duration_sec'] = duration
+            result = {
+                'intent': 'execute_plan',
+                'plan': [
+                    pause,
+                    {
+                        'action': 'deliver_drink',
+                        'drink': 'coffee',
+                        'target': 'current_task',
+                    },
+                ],
+            }
+        elif any(word in user_text for word in ('状态', '到哪', '为什么停')):
             result = {'intent': 'ask_status'}
         elif any(word in user_text for word in (
                 '详细讲', '深入讲', '展开讲', '为什么它')):
@@ -197,5 +217,6 @@ __all__ = [
     'create_backend',
     'extract_json_object',
     'ground_explanation_result',
+    'normalize_multi_task_result',
     'validate_model_result',
 ]
