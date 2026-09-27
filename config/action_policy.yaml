@@ -1,0 +1,47 @@
+version: 1
+
+# Human instructions temporarily outrank the default showroom missions.
+# Durations use wall-clock time so a fast Stage simulation does not make a
+# 20-second visitor interaction expire immediately.
+override:
+  default_duration_sec: 20.0
+  min_duration_sec: 2.0
+  max_duration_sec: 120.0
+  auto_resume: true
+
+robots:
+  guide:
+    robot_id: robot_0
+    display_name: 蓝色导览机器人
+    default_route: guide_full_route
+    aliases: [guide, blue, 导览机器人, 蓝色机器人]
+  coffee:
+    robot_id: robot_1
+    display_name: 绿色服务机器人
+    default_route: coffee_delivery_route
+    aliases: [coffee, green, 服务机器人, 咖啡机器人, 绿色机器人]
+
+# These are high-level, validated actions. Motion coordinates and cmd_vel are
+# deliberately excluded. Nav2 can replace the route primitive later without
+# changing the LLM contract or the task arbitration layer.
+actions:
+  pause:
+    display_name: 临时等待
+    allowed_robots: [guide, coffee, all]
+    completion: timeout
+    fallback: resume_default
+  resume:
+    display_name: 提前恢复
+    allowed_robots: [guide, coffee, all]
+    completion: immediate
+    fallback: none
+  start_default:
+    display_name: 执行默认任务
+    allowed_robots: [guide, coffee]
+    completion: route_completed
+    fallback: none
+  cancel:
+    display_name: 取消当前任务
+    allowed_robots: [guide, coffee, all]
+    completion: immediate
+    fallback: none

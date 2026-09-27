@@ -1,0 +1,12 @@
+build/
+install/
+log/
+__pycache__/
+*.py[cod]
+*.swp
+*.tmp
+.pytest_cache/
+.coverage
+models/
+.voice_python/
+.venv*/

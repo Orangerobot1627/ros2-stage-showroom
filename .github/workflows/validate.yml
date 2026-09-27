@@ -1,0 +1,31 @@
+name: Validate assets
+
+permissions:
+  contents: read
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install validator dependency
+        run: python -m pip install pyyaml
+      - name: Validate Stage project assets
+        run: python tools/validate_project.py
+      - name: Test business state machine
+        run: python tools/test_business_logic.py
+      - name: Test task action policy
+        run: python tools/test_action_policy.py
+      - name: Test LLM command contract
+        run: python tools/test_llm_bridge_logic.py
+      - name: Test voice core
+        run: python tools/test_voice_core.py

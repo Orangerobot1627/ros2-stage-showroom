@@ -1,0 +1,38 @@
+frame_id: world
+
+map:
+  width_m: 50.0
+  height_m: 35.0
+  resolution_m: 0.05
+  origin: [-25.0, -17.5, 0.0]
+
+zones:
+  entrance:
+    center: [0.0, -14.5]
+    bounds: [-4.0, -17.0, 4.0, -12.0]
+  coffee_bar:
+    center: [0.0, 0.0]
+    obstacle_radius: 3.6
+  vision_hall:
+    center: [-16.0, -8.5]
+    bounds: [-24.0, -13.8, -8.0, -3.2]
+  robotics_hall:
+    center: [-16.0, 9.5]
+    bounds: [-24.0, 3.5, -8.0, 16.8]
+  time_tunnel:
+    center: [0.0, 12.5]
+    bounds: [-6.0, 9.0, 6.0, 16.8]
+  dance_hall:
+    center: [16.0, 9.5]
+    bounds: [8.0, 3.5, 24.0, 16.8]
+  lounge:
+    center: [16.0, -6.0]
+    bounds: [9.0, -13.8, 24.0, 2.5]
+
+task_points:
+  guide_start: [0.0, -14.5, 1.5708]
+  coffee_robot_standby: [2.3, -14.5, 1.5708]
+  coffee_pickup: [0.0, -4.4, 1.5708]
+  lounge_delivery: [15.0, -8.5, 0.0]
+  tunnel_hidden_entry: [-5.5, 12.0, 0.0]
+  tunnel_hidden_exit: [5.5, 12.0, 0.0]
