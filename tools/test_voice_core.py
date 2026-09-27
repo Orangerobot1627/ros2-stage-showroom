@@ -48,6 +48,28 @@ def main():
     assert output is not None
     assert len(output) >= len(voice) * 3
 
+    # Speech uses a lower release threshold after activation, so quiet words
+    # inside one sentence do not become artificial silence.
+    hysteresis = UtteranceSegmenter(
+        sample_rate=1000,
+        frame_ms=20,
+        rms_threshold=500,
+        release_threshold_ratio=0.5,
+        start_ms=40,
+        end_silence_ms=60,
+        min_speech_ms=60,
+        max_utterance_sec=2,
+        pre_roll_ms=40,
+    )
+    loud = pcm_frame(800, samples)
+    quiet = pcm_frame(300, samples)
+    output = None
+    frames = [loud, loud, quiet, quiet, quiet, silence, silence, silence]
+    for frame in frames:
+        output = hysteresis.feed(frame) or output
+    assert output is not None
+    assert len(output) >= len(loud) * 5
+
     response = assistant_reply(json.dumps({
         'request_id': 3,
         'intent': 'pause_tour',

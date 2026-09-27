@@ -172,6 +172,16 @@ class ShowroomTaskManager(Node):
     def apply_effects(self, effects):
         for effect in effects:
             if effect.get('type') == 'route_command':
+                if (effect.get('robot_id') == 'robot_1'
+                        and effect.get('action') == 'start'):
+                    effect = self.default_delivery_effect()
+                    self.publish_json(
+                        self.navigation_request_publisher, effect)
+                    self.get_logger().info(
+                        f'Dispatch default delivery mission '
+                        f'{effect["mission_id"]} to '
+                        f'{effect["service_target"]}')
+                    continue
                 self.publish_json(self.route_publisher, effect)
                 self.get_logger().info(
                     f'Dispatch {effect["action"]} to '
@@ -360,6 +370,22 @@ class ShowroomTaskManager(Node):
             'service_target': unit.task_id,
             'beverage': beverage,
         }, unit
+
+    def default_delivery_effect(self):
+        """Convert the legacy coffee start into a semantic delivery request."""
+        target = self.logic.coffee_target or 'lounge'
+        unit = self.resolve_plan_target(target)
+        return {
+            'type': 'navigation_request',
+            'request_type': 'delivery',
+            'robot_id': 'robot_1',
+            'route': self.logic.route_for('robot_1'),
+            'mission_id': self.next_mission_id('delivery'),
+            'start': self.robot_locations.get(
+                'robot_1', 'coffee_robot_standby'),
+            'service_target': unit.task_id,
+            'beverage': self.logic.beverage or 'coffee',
+        }
 
     def execute_task_selection(self, intent, requested_tasks):
         """Replan the guide over selected task units on the shared graph."""

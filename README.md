@@ -4,8 +4,8 @@
 50 m × 35 m 的单层展馆、两台差速机器人、可复用的占据栅格地图，以及用于验证路线
 和传感器接口的轻量级航点跟随器。
 
-当前版本提供稳定、可复现的 Stage 仿真底座、事件驱动的双机器人任务编排，以及可连接
-Windows 本地模型服务的 LLM 桥接层。Nav2、语音和视觉能力将在此基础上继续接入。
+当前版本提供稳定、可复现的 Stage 仿真底座、事件驱动的双机器人任务编排、可连接
+Windows 本地模型服务的 LLM 桥接层，以及绿色服务机器人的轻量 Nav2 导航配置。
 
 ## 功能
 
@@ -21,7 +21,7 @@ Windows 本地模型服务的 LLM 桥接层。Nav2、语音和视觉能力将在
 - 7 个语义导览任务单元，支持跳过、重复、进入下一任务和上下文讲解
 - 受控多步骤计划、顺序执行状态机和小模型多意图修复
 - 语义导航网关与 Dijkstra 路线优化，支持把饮料送到当前展区
-- 可选 Nav2 `NavigateThroughPoses` 适配器，保持业务层与导航后端解耦
+- 可选 Nav2 配送栈，以 `NavigateToPose` 分段执行取货、交付和返回任务
 - 可选的本地 LLM 桥接层，支持 Qwen 的 Ollama 和 OpenAI 兼容 HTTP 接口
 - 本地 Whisper 中文语音识别和 Piper 中文语音合成，支持半双工防回声
 - 两台机器人共享全馆语义路网，支持任意展区饮料配送与服务专用最短路径
@@ -54,8 +54,8 @@ demo_stage/
 
 多任务与导航框架见
 [docs/MULTI_TASK_PLANNING.md](docs/MULTI_TASK_PLANNING.md)。当前默认使用经过地图净空
-校验的 Stage 图导航；Nav2 适配器已提供接口，但需要独立配置定位、TF、Costmap、Planner
-和 Controller 后才能切换为实际 Nav2 控制。
+校验的 Stage 图导航；绿色服务机器人的 Stage/Nav2 集成、参数和当前边界见
+[docs/NAV2_STAGE_INTEGRATION.md](docs/NAV2_STAGE_INTEGRATION.md)。
 
 ## 环境要求
 
@@ -163,6 +163,21 @@ ros2 launch demo_stage showroom.launch.py software_rendering:=0
 
 时间倍率在 `world/showroom_final.world` 的 `speedup` 字段中设置。无 GUI 模式不受该
 字段限制，会尽可能快地运行。
+
+启动绿色服务机器人 Nav2 配送模式：
+
+```bash
+ros2 run demo_stage showroom_session start \
+  --launch-file showroom_nav2.launch.py --monitor-windows
+```
+
+启动后可以从语音/LLM 发出配送请求，也可以先用结构化命令验证：
+
+```bash
+ros2 run demo_stage showroom_session exec -- \
+  ros2 topic pub --once /showroom/command std_msgs/msg/String \
+  "{data: '{\"intent\":\"deliver_drink\",\"drink\":\"coffee\",\"target\":\"reception\"}'}"
+```
 
 不使用业务管理器、直接按时间启动两条路线：
 

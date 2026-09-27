@@ -34,7 +34,7 @@ visitor text
   -> semantic navigation request
   -> navigation gateway
        -> Stage graph backend (default)
-       -> Nav2 NavigateThroughPoses adapter (optional)
+       -> Nav2 semantic NavigateToPose adapter (optional)
 ```
 
 The executor advances immediate actions until it reaches an asynchronous step.
@@ -89,14 +89,18 @@ length again before motion begins. Mission phases (`pickup`, `delivery`,
 ## Nav2 boundary
 
 Launch argument `navigation_backend:=stage_graph` is the tested default.
-`navigation_backend:=nav2` routes the same optimized plan through
-`showroom_nav2_adapter.py`, which sends `NavigateThroughPoses` to a namespaced
-Nav2 action server.
+`showroom_nav2.launch.py` starts the tested `navigation_backend:=nav2` profile.
+The gateway still validates the requested pickup and delivery destination, then
+`showroom_nav2_adapter.py` extracts the three semantic stops (`pickup`,
+`delivery`, `standby`). It sends one namespaced `NavigateToPose` goal per stop,
+so Nav2 computes the metric path from the occupancy grid instead of following
+every hand-authored graph waypoint.
 
-The adapter is intentionally optional. A real Nav2 run still needs a configured
-localization stack, `map -> odom -> base_link` TF, costmaps, planner, controller
-and velocity ownership. Do not run the reference waypoint follower and Nav2
-controller against the same robot `cmd_vel` topic at the same time.
+The current launch supplies the full TF chain, 2D costmaps, NavFn planner,
+Regulated Pure Pursuit controller, velocity smoother and collision monitor for
+`robot_1`. It disables the reference coffee waypoint controller, so only Nav2
+owns `/robot_1/cmd_vel`. See `NAV2_STAGE_INTEGRATION.md` for the Stage
+localization choice and the remaining guide-robot migration work.
 
 ## Referenced upstream designs
 
@@ -124,4 +128,3 @@ Inspect the plan and optimized route:
 ros2 topic echo /showroom/status --field data --full-length
 ros2 topic echo /showroom/navigation_events --field data --full-length
 ```
-

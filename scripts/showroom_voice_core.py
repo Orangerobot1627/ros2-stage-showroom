@@ -27,13 +27,16 @@ class UtteranceSegmenter:
     """Split a PCM stream into utterances using deterministic energy VAD."""
 
     def __init__(self, sample_rate=16000, frame_ms=30, rms_threshold=250.0,
-                 start_ms=120, end_silence_ms=900, min_speech_ms=300,
-                 max_utterance_sec=12.0, pre_roll_ms=300):
+                 start_ms=120, end_silence_ms=1800, min_speech_ms=300,
+                 max_utterance_sec=20.0, pre_roll_ms=450,
+                 release_threshold_ratio=0.60):
         self.sample_rate = int(sample_rate)
         self.frame_ms = int(frame_ms)
         self.frame_bytes = int(
             self.sample_rate * self.frame_ms / 1000) * 2
         self.rms_threshold = float(rms_threshold)
+        self.release_threshold = (
+            self.rms_threshold * float(release_threshold_ratio))
         self.start_frames = max(1, math.ceil(start_ms / self.frame_ms))
         self.end_frames = max(
             1, math.ceil(end_silence_ms / self.frame_ms))
@@ -58,7 +61,10 @@ class UtteranceSegmenter:
         """Consume one PCM frame and return completed utterance bytes or None."""
         if len(frame) != self.frame_bytes:
             return None
-        voiced = pcm_rms(frame) >= self.rms_threshold
+        amplitude = pcm_rms(frame)
+        threshold = (
+            self.release_threshold if self.active else self.rms_threshold)
+        voiced = amplitude >= threshold
 
         if not self.active:
             self.pre_roll.append(frame)

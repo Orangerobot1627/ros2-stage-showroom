@@ -8,6 +8,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
+from showroom_nav2_adapter import semantic_targets_from_plan  # noqa: E402
 from showroom_navigation import (  # noqa: E402
     build_delivery_plan,
     build_guide_plan,
@@ -63,6 +64,11 @@ def main():
     assert document['waypoints'][document['nodes'].index(
         'vision_inside')]['mission_phase'] == 'delivery'
     assert document['waypoints'][-1]['mission_phase'] == 'standby'
+    nav2_targets = semantic_targets_from_plan(document)
+    assert [item['mission_phase'] for item in nav2_targets] == [
+        'pickup', 'delivery', 'standby']
+    assert [item['label'] for item in nav2_targets] == [
+        'coffee_pickup', 'vision_inside', 'coffee_robot_standby']
     catalog = TaskUnitCatalog.from_files(
         ROOT / 'config' / 'task_units.yaml',
         ROOT / 'config' / 'routes.yaml')

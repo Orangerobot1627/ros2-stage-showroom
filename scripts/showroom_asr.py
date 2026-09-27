@@ -29,16 +29,30 @@ class ShowroomASR(Node):
         self.declare_parameter('language', 'zh')
         self.declare_parameter(
             'initial_prompt',
-            '科技展馆，开始导览，暂停导览，继续参观，请准备咖啡，'
-            '蓝色导览机器人，绿色服务机器人，休息区。')
+            '未来科技展馆。游客可以说：我想在智能机器人展厅多待一会儿，'
+            '先别往前走；请绿色服务机器人送一杯咖啡过来；'
+            '跳过科技舞蹈展厅；直接去休息服务区。常用场馆：'
+            '科技发展历史展区、计算机视觉展厅、智能机器人展厅、'
+            '时空科技隧道、科技舞蹈展厅、智能休息服务区。')
+        self.declare_parameter(
+            'hotwords',
+            '未来科技展馆 开始导览 暂停导览 继续参观 跳过展厅 '
+            '智能机器人展厅 多待一会儿 先别往前走 '
+            '绿色服务机器人 送一杯咖啡 科技发展历史 '
+            '计算机视觉 时空科技隧道 科技舞蹈展厅 '
+            '直接去休息服务区 饮料 Nav2')
+        self.declare_parameter('beam_size', 3)
         self.declare_parameter('input_target', '')
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('frame_ms', 30)
         self.declare_parameter('rms_threshold', 250.0)
         self.declare_parameter('start_ms', 120)
-        self.declare_parameter('end_silence_ms', 900)
+        self.declare_parameter('end_silence_ms', 1800)
         self.declare_parameter('min_speech_ms', 300)
-        self.declare_parameter('max_utterance_sec', 12.0)
+        self.declare_parameter('max_utterance_sec', 20.0)
+        self.declare_parameter('pre_roll_ms', 450)
+        self.declare_parameter('release_threshold_ratio', 0.60)
+        self.declare_parameter('queue_capacity', 4)
         self.declare_parameter('user_topic', '/showroom/user_text')
         self.declare_parameter(
             'transcript_topic', '/showroom/voice/transcript')
@@ -72,8 +86,12 @@ class ShowroomASR(Node):
             min_speech_ms=int(self.get_parameter('min_speech_ms').value),
             max_utterance_sec=float(
                 self.get_parameter('max_utterance_sec').value),
+            pre_roll_ms=int(self.get_parameter('pre_roll_ms').value),
+            release_threshold_ratio=float(
+                self.get_parameter('release_threshold_ratio').value),
         )
-        self.utterances = queue.Queue(maxsize=2)
+        self.utterances = queue.Queue(maxsize=int(
+            self.get_parameter('queue_capacity').value))
         self.stopping = threading.Event()
         self.tts_speaking = threading.Event()
         self.capture_process = None
@@ -184,12 +202,15 @@ class ShowroomASR(Node):
                 segments, _ = model.transcribe(
                     str(wav_path),
                     language=str(self.get_parameter('language').value),
-                    beam_size=1,
-                    best_of=1,
+                    beam_size=int(self.get_parameter('beam_size').value),
                     condition_on_previous_text=False,
                     initial_prompt=str(
                         self.get_parameter('initial_prompt').value),
-                    vad_filter=True,
+                    hotwords=str(self.get_parameter('hotwords').value),
+                    # The streaming segmenter has already produced one
+                    # complete utterance. A second VAD pass can remove quiet
+                    # Chinese syllables at the start or end of the command.
+                    vad_filter=False,
                 )
                 text = ''.join(segment.text for segment in segments).strip()
                 if text:

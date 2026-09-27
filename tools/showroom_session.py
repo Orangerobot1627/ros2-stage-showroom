@@ -968,7 +968,9 @@ def build_parser():
         help='显式指定空闲 Domain；默认从 81..99 轮换分配')
     start.add_argument(
         '--launch-file', default='showroom_demo.launch.py',
-        choices=('showroom.launch.py', 'showroom_demo.launch.py'),
+        choices=(
+            'showroom.launch.py', 'showroom_demo.launch.py',
+            'showroom_nav2.launch.py'),
         help='要启动的 launch 文件')
     start.add_argument(
         '--monitor-windows', action='store_true',

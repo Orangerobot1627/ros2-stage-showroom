@@ -245,7 +245,7 @@ def generate_launch_description():
             parameters=[{
                 'use_sim_time': True,
                 'robot_id': 'robot_1',
-                'action_name': 'navigate_through_poses',
+                'action_name': 'navigate_to_pose',
                 'frame_id': 'map',
             }],
         ),
