@@ -63,8 +63,9 @@ LLM 层内部继续按职责拆分：`showroom_ollama_client` 只处理 HTTP 和
 覆盖模型自由文本，避免小模型遗漏字段或编造展品。Ollama 的 `message.thinking` 不进入
 输出协议解析。
 
-后续 Nav2 接入时，用导航节点替换参考航点跟随器；Stage 世界和机器人传感器接口保持
-不变。任务管理器继续使用命名地点和任务事件，LLM 不获得 `/cmd_vel` 控制权。
+双 Nav2 配置已经用两个命名空间导航栈替换参考航点跟随器；Stage 世界和机器人传感器
+接口保持不变。任务管理器继续只使用命名地点和任务事件，LLM 不获得 `/cmd_vel`
+控制权。Gazebo 或实机迁移时需要把固定 Stage 初始变换替换为 AMCL、SLAM 或融合定位。
 
 ## Business state machine
 

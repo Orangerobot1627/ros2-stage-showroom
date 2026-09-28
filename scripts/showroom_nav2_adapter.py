@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute semantic showroom delivery stops with Nav2 NavigateToPose."""
+"""Execute one robot's semantic showroom plan with Nav2 NavigateToPose."""
 
 import json
 import math
@@ -16,7 +16,7 @@ from std_msgs.msg import String
 
 
 class ShowroomNav2Adapter(Node):
-    """Send semantic delivery stops to a namespaced Nav2 action server."""
+    """Send validated guide or delivery targets to a namespaced Nav2 stack."""
 
     def __init__(self):
         super().__init__('showroom_nav2_adapter')
@@ -29,6 +29,8 @@ class ShowroomNav2Adapter(Node):
         self.declare_parameter('frame_id', 'map')
         self.declare_parameter('server_wait_timeout_sec', 10.0)
         self.declare_parameter('inter_goal_delay_sec', 1.0)
+        self.declare_parameter('goal_reject_retry_limit', 20)
+        self.declare_parameter('goal_reject_retry_delay_sec', 0.5)
         self.robot_id = str(self.get_parameter('robot_id').value)
         self.frame_id = str(self.get_parameter('frame_id').value)
         event_qos = QoSProfile(
@@ -54,14 +56,20 @@ class ShowroomNav2Adapter(Node):
         self.goal_handle = None
         self.cancel_reason = None
         self.pending_control = None
+        self.pending_plan = None
         self.paused = False
         self.route_started_emitted = False
         self.phase_started_indices = set()
+        self.goal_reject_count = 0
         self.get_logger().info(
             f'Nav2 adapter ready for {self.robot_id}; waiting for action server')
 
     def publish_event(self, event_type, **fields):
         document = {'type': event_type, 'robot_id': self.robot_id}
+        if self.active_plan is not None:
+            for key in ('route', 'mission_id', 'request_type'):
+                if self.active_plan.get(key) is not None:
+                    document[key] = self.active_plan[key]
         document.update(fields)
         message = String()
         message.data = json.dumps(
@@ -90,15 +98,19 @@ class ShowroomNav2Adapter(Node):
         return pose
 
     def plan_callback(self, message):
+        document = {}
         try:
             document = json.loads(message.data)
             if document.get('robot_id') != self.robot_id:
                 return
-            if self.active_plan is not None:
-                raise ValueError('Nav2 adapter already has an active plan')
             targets = semantic_targets_from_plan(document)
         except (json.JSONDecodeError, TypeError, ValueError) as exception:
-            self.publish_event('route_failed', reason=str(exception))
+            mission_id = (
+                document.get('mission_id')
+                if isinstance(document, dict) else None)
+            self.publish_event(
+                'route_failed', mission_id=mission_id,
+                reason=str(exception), backend='nav2')
             return
         if not self.client.wait_for_server(timeout_sec=float(
                 self.get_parameter('server_wait_timeout_sec').value)):
@@ -106,10 +118,49 @@ class ShowroomNav2Adapter(Node):
                 'route_failed', mission_id=document.get('mission_id'),
                 reason='NavigateToPose action server unavailable')
             return
+        if self.active_plan is not None:
+            if self.robot_id != 'robot_0' \
+                    or document.get('request_type') != 'guide_itinerary':
+                self.publish_event(
+                    'route_failed', mission_id=document.get('mission_id'),
+                    reason='Nav2 adapter already has an active plan')
+                return
+            self.pending_plan = (document, targets)
+            self.replace_active_plan()
+            return
+        self.activate_plan(document, targets)
+
+    def activate_plan(self, document, targets):
+        """Install and start one already validated semantic plan."""
         self.active_plan = document
         self.targets = targets
         self.target_index = 0
+        self.paused = False
+        self.route_started_emitted = False
+        self.phase_started_indices.clear()
+        self.goal_reject_count = 0
         self.send_current_target()
+
+    def replace_active_plan(self):
+        """Cancel the old guide goal, then atomically start the new plan."""
+        if self.cancel_reason is not None:
+            self.cancel_reason = 'replace'
+            return
+        if self.inter_goal_timer is not None or self.paused:
+            self.activate_pending_plan()
+            return
+        if self.goal_handle is None:
+            self.pending_control = 'replace'
+            return
+        self.request_goal_cancel('replace')
+
+    def activate_pending_plan(self):
+        pending = self.pending_plan
+        if pending is None:
+            return
+        self.clear_plan(preserve_pending=True)
+        self.pending_plan = None
+        self.activate_plan(*pending)
 
     def route_command_callback(self, message):
         """Apply pause, resume and cancel to the active Nav2 mission."""
@@ -164,6 +215,11 @@ class ShowroomNav2Adapter(Node):
 
     def cancel_navigation(self):
         """Cancel motion and discard the entire delivery plan."""
+        self.pending_plan = None
+        if self.cancel_reason is not None:
+            self.cancel_reason = 'cancel'
+            self.pending_control = None
+            return
         if self.paused:
             self.publish_control_event('route_cancelled')
             self.clear_plan()
@@ -198,9 +254,12 @@ class ShowroomNav2Adapter(Node):
         return (self.active_plan or {}).get('mission_id')
 
     def publish_control_event(self, event_type):
+        target = None
+        if self.targets and self.target_index < len(self.targets):
+            target = self.targets[self.target_index]['label']
         self.publish_event(
             event_type, mission_id=self.mission_id(), backend='nav2',
-            target=self.targets[self.target_index]['label'])
+            target=target)
 
     def send_current_target(self):
         target = self.targets[self.target_index]
@@ -208,32 +267,50 @@ class ShowroomNav2Adapter(Node):
         goal.pose = self.pose_for_target(self.target_index)
         future = self.client.send_goal_async(goal)
         future.add_done_callback(self.goal_response_callback)
+        context = (
+            target.get('mission_phase') or target.get('task_id')
+            or (self.active_plan or {}).get('request_type', 'semantic_target'))
         self.get_logger().info(
             f'Nav2 target {self.target_index + 1}/{len(self.targets)}: '
-            f'{target["label"]} ({target["mission_phase"]})')
+            f'{target["label"]} ({context})')
 
     def goal_response_callback(self, future):
         goal_handle = future.result()
         document = self.active_plan or {}
         mission_id = document.get('mission_id')
-        if not goal_handle.accepted:
+        if goal_handle is None or not goal_handle.accepted:
+            retry_limit = int(
+                self.get_parameter('goal_reject_retry_limit').value)
+            if self.goal_reject_count < retry_limit:
+                self.goal_reject_count += 1
+                delay = float(self.get_parameter(
+                    'goal_reject_retry_delay_sec').value)
+                self.inter_goal_timer = self.create_timer(
+                    max(0.1, delay), self.send_delayed_target)
+                self.get_logger().warning(
+                    'Nav2 goal rejected while stack may be activating; '
+                    f'retry {self.goal_reject_count}/{retry_limit}')
+                return
             self.publish_event(
                 'route_failed', mission_id=mission_id,
                 reason='Nav2 rejected NavigateToPose goal')
             self.clear_plan()
             return
         self.goal_handle = goal_handle
+        self.goal_reject_count = 0
         if not self.route_started_emitted:
             self.publish_event(
-                'route_started', mission_id=mission_id, backend='nav2')
+                'route_started', mission_id=mission_id, backend='nav2',
+                total=len(self.targets))
             self.route_started_emitted = True
         if self.target_index not in self.phase_started_indices:
-            if self.targets[self.target_index]['mission_phase'] == 'delivery':
+            phase = self.targets[self.target_index].get('mission_phase')
+            if phase == 'delivery':
                 self.publish_event(
                     'waypoint_reached', mission_id=mission_id,
                     label='depart_pickup', mission_phase='depart_pickup',
                     backend='nav2')
-            elif self.targets[self.target_index]['mission_phase'] == 'standby':
+            elif phase == 'standby':
                 self.publish_event(
                     'waypoint_reached', mission_id=mission_id,
                     label='return_from_delivery', mission_phase='returning',
@@ -241,7 +318,7 @@ class ShowroomNav2Adapter(Node):
             self.phase_started_indices.add(self.target_index)
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self.result_callback)
-        if self.pending_control in ('pause', 'cancel'):
+        if self.pending_control in ('pause', 'cancel', 'replace'):
             control = self.pending_control
             self.pending_control = None
             self.request_goal_cancel(control)
@@ -265,6 +342,9 @@ class ShowroomNav2Adapter(Node):
                 self.publish_control_event('route_cancelled')
                 self.clear_plan()
                 return
+            if reason == 'replace':
+                self.activate_pending_plan()
+                return
         if status != GoalStatus.STATUS_SUCCEEDED:
             self.publish_event(
                 'route_failed', mission_id=mission_id, backend='nav2',
@@ -274,10 +354,17 @@ class ShowroomNav2Adapter(Node):
             return
 
         target = self.targets[self.target_index]
-        self.publish_event(
-            'waypoint_reached', mission_id=mission_id, backend='nav2',
-            label=target['label'], mission_phase=target['mission_phase'],
-            index=self.target_index + 1, total=len(self.targets))
+        event_fields = {
+            'mission_id': mission_id,
+            'backend': 'nav2',
+            'label': target['label'],
+            'index': self.target_index + 1,
+            'total': len(self.targets),
+        }
+        for field in ('mission_phase', 'task_id', 'task_phase'):
+            if target.get(field) is not None:
+                event_fields[field] = target[field]
+        self.publish_event('waypoint_reached', **event_fields)
         self.target_index += 1
         if self.target_index < len(self.targets):
             delay = float(self.get_parameter('inter_goal_delay_sec').value)
@@ -302,7 +389,7 @@ class ShowroomNav2Adapter(Node):
             self.destroy_timer(self.inter_goal_timer)
             self.inter_goal_timer = None
 
-    def clear_plan(self):
+    def clear_plan(self, preserve_pending=False):
         self.cancel_inter_goal_timer()
         self.active_plan = None
         self.targets = []
@@ -310,9 +397,12 @@ class ShowroomNav2Adapter(Node):
         self.goal_handle = None
         self.cancel_reason = None
         self.pending_control = None
+        if not preserve_pending:
+            self.pending_plan = None
         self.paused = False
         self.route_started_emitted = False
         self.phase_started_indices.clear()
+        self.goal_reject_count = 0
 
 
 def main(args=None):

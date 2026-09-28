@@ -90,6 +90,9 @@ def main():
     assert tracker.snapshot()['skipped_task_ids'] == ['robotics_hall']
     assert not tracker.observe_waypoint('robotics_inside', reached_index=2)
     assert tracker.current.task_id == 'vision_hall'
+    command, _, target = tracker.edit('next_task')
+    assert target.task_id == 'lounge'
+    assert command['waypoint_label'] == 'lounge_top_entry'
     print('Semantic guide task units and task editing: OK')
 
 

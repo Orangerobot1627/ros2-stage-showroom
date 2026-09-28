@@ -27,8 +27,10 @@ def main():
         'type': 'route_started',
         'robot_id': 'robot_0',
         'route': 'guide_full_route',
+        'total': 65,
         'stamp': 10.0,
     }, 10.0)
+    assert robot.snapshot(10.0)['waypoint_total'] == 65
     robot.handle_event({
         'type': 'waypoint_reached',
         'robot_id': 'robot_0',

@@ -132,6 +132,13 @@ def main():
         'type': 'route_completed', 'robot_id': 'robot_1'})
     assert dynamic.coffee_state == 'RETURNED'
 
+    failed = BusinessLogic()
+    failed.handle_command({'intent': 'start_tour', 'coffee': False})
+    failed.handle_event({
+        'type': 'route_failed', 'robot_id': 'robot_0',
+        'reason': 'planner error'})
+    assert failed.guide_state == 'FAILED'
+
     print('Business state-machine scenarios: OK')
 
 

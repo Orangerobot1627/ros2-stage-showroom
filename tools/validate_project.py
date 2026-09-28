@@ -40,18 +40,27 @@ def main():
 
     ET.parse(ROOT / 'package.xml')
 
-    world = ROOT / 'world' / 'showroom_final.world'
-    world_text = world.read_text(encoding='utf-8')
-    if world_text.count('(') != world_text.count(')'):
-        raise ValueError('Unbalanced parentheses in showroom_final.world')
-    if not re.search(r'^paused\s+0\s*$', world_text, re.MULTILINE):
-        raise ValueError('Stage world must start unpaused for headless operation')
-    if not re.search(r'^speedup\s+[0-9.]+\s*$', world_text, re.MULTILINE):
-        raise ValueError('Stage world must declare an explicit GUI speedup')
-    includes = re.findall(r'include\s+"([^"]+)"', world_text)
-    missing = [name for name in includes if not (world.parent / name).is_file()]
-    if missing:
-        raise FileNotFoundError(f'Missing Stage includes: {missing}')
+    includes = []
+    for world_name in ('showroom_final.world', 'showroom_nav2.world'):
+        world = ROOT / 'world' / world_name
+        world_text = world.read_text(encoding='utf-8')
+        if world_text.count('(') != world_text.count(')'):
+            raise ValueError(f'Unbalanced parentheses in {world_name}')
+        if not re.search(r'^paused\s+0\s*$', world_text, re.MULTILINE):
+            raise ValueError(
+                f'{world_name} must start unpaused for headless operation')
+        if not re.search(
+                r'^speedup\s+[0-9.]+\s*$', world_text, re.MULTILINE):
+            raise ValueError(
+                f'{world_name} must declare an explicit speedup')
+        world_includes = re.findall(r'include\s+"([^"]+)"', world_text)
+        missing = [
+            name for name in world_includes
+            if not (world.parent / name).is_file()]
+        if missing:
+            raise FileNotFoundError(
+                f'Missing Stage includes in {world_name}: {missing}')
+        includes.extend(world_includes)
 
     test_obstacles = ROOT / 'world' / 'include' / 'showroom_test_obstacles.inc'
     obstacle_text = test_obstacles.read_text(encoding='utf-8')

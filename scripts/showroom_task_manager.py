@@ -53,6 +53,7 @@ class ShowroomTaskManager(Node):
         self.declare_parameter('task_units_file', '')
         self.declare_parameter('routes_file', '')
         self.declare_parameter('override_timeout_sec', 0.0)
+        self.declare_parameter('navigation_backend', 'stage_graph')
 
         policy_file = str(self.get_parameter('action_policy_file').value)
         if policy_file:
@@ -67,6 +68,8 @@ class ShowroomTaskManager(Node):
             self.action_policy.default_duration = self.action_policy.duration(
                 configured_timeout)
         self.override_leases = OverrideLeaseBook()
+        self.navigation_backend = str(
+            self.get_parameter('navigation_backend').value).strip()
         self.logic = BusinessLogic(
             self.get_parameter('coffee_trigger').value,
             default_routes=self.action_policy.default_routes)
@@ -172,6 +175,16 @@ class ShowroomTaskManager(Node):
     def apply_effects(self, effects):
         for effect in effects:
             if effect.get('type') == 'route_command':
+                if (self.navigation_backend == 'nav2'
+                        and effect.get('robot_id') == 'robot_0'
+                        and effect.get('action') == 'start'):
+                    effect = self.default_guide_effect()
+                    self.publish_json(
+                        self.navigation_request_publisher, effect)
+                    self.get_logger().info(
+                        f'Dispatch default guide mission '
+                        f'{effect["mission_id"]}')
+                    continue
                 if (effect.get('robot_id') == 'robot_1'
                         and effect.get('action') == 'start'):
                     effect = self.default_delivery_effect()
@@ -324,13 +337,29 @@ class ShowroomTaskManager(Node):
         effects = []
         self.override_leases.release('robot_0')
         if guide_state == 'PAUSED':
-            effects.extend(self.logic.resume_robot('robot_0'))
+            if self.navigation_backend == 'nav2':
+                previous_state = self.logic.paused_from.pop(
+                    'robot_0', 'TOURING')
+                self.logic.guide_state = previous_state
+            else:
+                effects.extend(self.logic.resume_robot('robot_0'))
         elif guide_state == 'BLOCKED':
             previous = self.logic.blocked_from.pop('robot_0', 'TOURING')
             self.logic.guide_state = previous
 
+        previous_itinerary = list(
+            self.task_units.itinerary or [
+                unit.task_id for unit in self.task_units.catalog.units])
+        skipped = list(self.task_units.skipped_task_ids)
         route_effect, previous, target = self.task_units.edit(intent)
-        effects.append(route_effect)
+        if self.navigation_backend == 'nav2':
+            target_position = previous_itinerary.index(target.task_id)
+            remaining_ids = previous_itinerary[target_position:]
+            self.task_units.set_itinerary(
+                remaining_ids, skipped=skipped, last_edit=intent)
+            effects.append(self.guide_navigation_effect(remaining_ids))
+        else:
+            effects.append(route_effect)
         if intent == 'repeat_current':
             detail = f'重新执行当前任务：{target.display_name}'
         elif intent == 'skip_current':
@@ -387,6 +416,24 @@ class ShowroomTaskManager(Node):
             'beverage': self.logic.beverage or 'coffee',
         }
 
+    def guide_navigation_effect(self, task_ids, resume_task_id=None):
+        """Create one replaceable semantic Nav2 guide itinerary."""
+        return {
+            'type': 'navigation_request',
+            'request_type': 'guide_itinerary',
+            'robot_id': 'robot_0',
+            'route': self.logic.route_for('robot_0'),
+            'mission_id': self.next_mission_id('guide'),
+            'start': self.robot_locations.get('robot_0', 'entrance'),
+            'task_ids': list(task_ids),
+            'resume_task_id': resume_task_id,
+        }
+
+    def default_guide_effect(self):
+        """Convert the legacy guide start into a semantic Nav2 itinerary."""
+        return self.guide_navigation_effect([
+            unit.task_id for unit in self.task_units.catalog.units])
+
     def execute_task_selection(self, intent, requested_tasks):
         """Replan the guide over selected task units on the shared graph."""
         if self.logic.state_for('robot_0') not in (
@@ -430,22 +477,15 @@ class ShowroomTaskManager(Node):
         self.logic.guide_state = 'TOURING'
         self.task_units.set_itinerary(
             [unit.task_id for unit in selected], skipped=skipped)
-        mission_id = self.next_mission_id('guide')
-        effect = {
-            'type': 'navigation_request',
-            'request_type': 'guide_itinerary',
-            'robot_id': 'robot_0',
-            'route': self.logic.route_for('robot_0'),
-            'mission_id': mission_id,
-            'start': self.robot_locations.get('robot_0', 'entrance'),
-            'task_ids': [unit.task_id for unit in selected],
-            'resume_task_id': (
+        effect = self.guide_navigation_effect(
+            [unit.task_id for unit in selected],
+            resume_task_id=(
                 previous_current.task_id
                 if previous_current is not None
                 and previous_current.task_id in {
                     unit.task_id for unit in selected}
-                else None),
-        }
+                else None))
+        mission_id = effect['mission_id']
         names = '、'.join(unit.display_name for unit in selected)
         return [effect], f'guide itinerary {mission_id}: {names}'
 

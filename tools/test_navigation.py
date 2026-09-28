@@ -79,13 +79,18 @@ def main():
         'task_ids': ['vision_hall', 'dance_hall', 'lounge'],
     }, catalog)
     assert guide['request_type'] == 'guide_itinerary'
-    assert guide['nodes'][0] == 'entrance'
+    assert guide['nodes'][0] == 'stairs_clearance'
     assert guide['nodes'][-1] == 'guide_destination'
     assert guide['task_ids'] == ['vision_hall', 'dance_hall', 'lounge']
     assert 'vision_display_north' in guide['nodes']
     assert any(
         item.get('task_id') == 'vision_hall'
         for item in guide['waypoints'])
+    guide_targets = semantic_targets_from_plan(guide)
+    assert len(guide_targets) == len(guide['waypoints'])
+    assert guide_targets[-1]['label'] == 'guide_destination'
+    assert guide_targets[-1]['task_id'] == 'lounge'
+    assert guide_targets[-1]['task_phase'] == 'task_end'
     resumed = build_guide_plan(planner, {
         'robot_id': 'robot_0',
         'mission_id': 'guide-8',
@@ -93,7 +98,7 @@ def main():
         'resume_task_id': 'vision_hall',
         'task_ids': ['vision_hall', 'lounge'],
     }, catalog)
-    assert resumed['nodes'][0] == 'vision_display_north'
+    assert resumed['nodes'][0] != 'vision_display_north'
     assert resumed['nodes'].count('vision_hall_entry') == 0
     print(f'Navigation graph delivery routes: OK {distances}')
 

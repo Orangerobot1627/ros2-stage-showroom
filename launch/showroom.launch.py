@@ -18,7 +18,9 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     package_share = get_package_share_directory('demo_stage')
-    world_file = os.path.join(package_share, 'world', 'showroom_final.world')
+    default_world_file = os.path.join(
+        package_share, 'world', 'showroom_final.world')
+    world_file = LaunchConfiguration('world_file')
     route_file = os.path.join(package_share, 'config', 'routes.yaml')
 
     enable_gui = LaunchConfiguration('enable_gui')
@@ -48,6 +50,7 @@ def generate_launch_description():
     guide_start_delay = LaunchConfiguration('guide_start_delay_sec')
     coffee_start_delay = LaunchConfiguration('coffee_start_delay_sec')
     navigation_backend = LaunchConfiguration('navigation_backend')
+    base_watchdog_timeout = LaunchConfiguration('base_watchdog_timeout_sec')
 
     stage_node = Node(
         package='stage_ros2',
@@ -67,7 +70,8 @@ def generate_launch_description():
             'enforce_prefixes': True,
             'one_tf_tree': one_tf_tree,
             'use_static_transformations': True,
-            'base_watchdog_timeout': 0.8,
+            'base_watchdog_timeout': ParameterValue(
+                base_watchdog_timeout, value_type=float),
             'publish_ground_truth': True,
         }],
     )
@@ -76,6 +80,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_gui', default_value='true',
             description='Show the Stage GUI.'),
+        DeclareLaunchArgument(
+            'world_file', default_value=default_world_file,
+            description='Stage world file; Nav2 uses a real-time profile.'),
         DeclareLaunchArgument(
             'auto_drive', default_value='false',
             description='Start the reference waypoint followers.'),
@@ -169,6 +176,11 @@ def generate_launch_description():
             description=(
                 'Semantic navigation backend: stage_graph or nav2. Nav2 '
                 'requires a running namespaced Nav2 stack.')),
+        DeclareLaunchArgument(
+            'base_watchdog_timeout_sec', default_value='0.8',
+            description=(
+                'Simulation seconds before Stage stops on stale cmd_vel; '
+                'dual Nav2 uses a larger scheduling margin.')),
 
         stage_node,
         RegisterEventHandler(
@@ -196,6 +208,7 @@ def generate_launch_description():
                 'action_policy_file': ParameterValue(
                     action_policy_file, value_type=str),
                 'override_timeout_sec': override_timeout,
+                'navigation_backend': navigation_backend,
             }],
         ),
 
@@ -225,6 +238,28 @@ def generate_launch_description():
             parameters=[{
                 'use_sim_time': True,
                 'backend': navigation_backend,
+            }],
+        ),
+
+        Node(
+            package='demo_stage',
+            executable='showroom_nav2_adapter.py',
+            namespace='robot_0',
+            name='showroom_nav2_adapter',
+            output='screen',
+            condition=IfCondition(PythonExpression([
+                "'", business_mode, "'.lower() == 'true' and '",
+                navigation_backend, "' == 'nav2'",
+            ])),
+            additional_env={
+                'ROS_AUTOMATIC_DISCOVERY_RANGE': 'LOCALHOST',
+                'ROS_DOMAIN_ID': ros_domain_id,
+            },
+            parameters=[{
+                'use_sim_time': True,
+                'robot_id': 'robot_0',
+                'action_name': 'navigate_to_pose',
+                'frame_id': 'map',
             }],
         ),
 
@@ -317,7 +352,10 @@ def generate_launch_description():
             namespace='robot_0',
             name='guide_route_follower',
             output='screen',
-            condition=IfCondition(auto_drive),
+            condition=IfCondition(PythonExpression([
+                "'", auto_drive, "'.lower() == 'true' and '",
+                navigation_backend, "' == 'stage_graph'",
+            ])),
             additional_env={
                 'ROS_AUTOMATIC_DISCOVERY_RANGE': 'LOCALHOST',
                 'ROS_DOMAIN_ID': ros_domain_id,

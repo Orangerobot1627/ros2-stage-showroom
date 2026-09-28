@@ -173,7 +173,7 @@ class TaskUnitTracker:
         self.itinerary = None
         self.skipped_task_ids = []
 
-    def set_itinerary(self, task_ids, skipped=None):
+    def set_itinerary(self, task_ids, skipped=None, last_edit='set_itinerary'):
         """Set a semantic visit list independently from its planned path."""
         units = self.catalog.ordered(task_ids)
         if not units:
@@ -182,7 +182,7 @@ class TaskUnitTracker:
         self.skipped_task_ids = list(dict.fromkeys(skipped or []))
         self.current_index = self.catalog.units.index(units[0])
         self.last_waypoint = None
-        self.last_edit = 'set_itinerary'
+        self.last_edit = last_edit
         self.pending_seek_task_id = None
         return units
 
@@ -231,9 +231,14 @@ class TaskUnitTracker:
             raise TaskUnitError('导览尚未开始，没有可编辑的当前任务')
         target_index = self.current_index
         if intent in ('skip_current', 'next_task'):
-            target_index += 1
-            if target_index >= len(self.catalog.units):
+            allowed = set(self.itinerary or (
+                unit.task_id for unit in self.catalog.units))
+            following = [
+                index for index, unit in enumerate(self.catalog.units)
+                if index > self.current_index and unit.task_id in allowed]
+            if not following:
                 raise TaskUnitError('当前已经是最后一个导览任务')
+            target_index = following[0]
         target = self.catalog.units[target_index]
         previous = self.current
         self.current_index = target_index

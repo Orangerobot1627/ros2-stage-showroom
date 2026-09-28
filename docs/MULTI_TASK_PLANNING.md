@@ -90,17 +90,17 @@ length again before motion begins. Mission phases (`pickup`, `delivery`,
 
 Launch argument `navigation_backend:=stage_graph` is the tested default.
 `showroom_nav2.launch.py` starts the tested `navigation_backend:=nav2` profile.
-The gateway still validates the requested pickup and delivery destination, then
-`showroom_nav2_adapter.py` extracts the three semantic stops (`pickup`,
-`delivery`, `standby`). It sends one namespaced `NavigateToPose` goal per stop,
-so Nav2 computes the metric path from the occupancy grid instead of following
-every hand-authored graph waypoint.
+The gateway still validates guide itineraries and delivery destinations.
+`showroom_nav2_adapter.py` keeps the three service stops (`pickup`, `delivery`,
+`standby`) for `robot_1`, while `robot_0` receives the validated guide corridor
+points with semantic task metadata. Each target is submitted as a namespaced
+`NavigateToPose` goal so it can be paused, replaced, and replanned independently.
 
-The current launch supplies the full TF chain, 2D costmaps, NavFn planner,
-Regulated Pure Pursuit controller, velocity smoother and collision monitor for
-`robot_1`. It disables the reference coffee waypoint controller, so only Nav2
-owns `/robot_1/cmd_vel`. See `NAV2_STAGE_INTEGRATION.md` for the Stage
-localization choice and the remaining guide-robot migration work.
+The current launch supplies an isolated TF selection, 2D costmaps, NavFn
+planner, Regulated Pure Pursuit controller, velocity smoother and collision
+monitor for both robots. It disables both reference waypoint controllers so
+each namespaced Nav2 stack is the sole owner of its robot's `/cmd_vel`. See
+`NAV2_STAGE_INTEGRATION.md` for the Stage localization and timing choices.
 
 ## Referenced upstream designs
 

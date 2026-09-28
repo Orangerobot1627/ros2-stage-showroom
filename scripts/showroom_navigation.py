@@ -13,18 +13,19 @@ DELIVERY_PHASES = ('pickup', 'delivery', 'standby')
 
 
 def semantic_targets_from_plan(document):
-    """Reduce a graph delivery path to the service stops Nav2 must reach."""
+    """Return the validated semantic targets one Nav2 adapter must reach."""
     waypoints = document.get('waypoints') or []
     if not isinstance(waypoints, list) or not 1 <= len(waypoints) <= 256:
         raise ValueError('Nav2 plan needs 1..256 waypoints')
-    if document.get('request_type') != 'delivery':
-        raise ValueError('Nav2 adapter currently supports delivery plans')
+    request_type = document.get('request_type')
+    if request_type not in ('delivery', 'guide_itinerary'):
+        raise ValueError('Unsupported Nav2 semantic plan type')
     targets = []
     for item in waypoints:
         if not isinstance(item, dict):
             raise ValueError('Nav2 waypoint must be an object')
         phase = item.get('mission_phase')
-        if phase not in DELIVERY_PHASES:
+        if request_type == 'delivery' and phase not in DELIVERY_PHASES:
             continue
         try:
             x = float(item['x'])
@@ -33,16 +34,24 @@ def semantic_targets_from_plan(document):
             raise ValueError('Nav2 target needs numeric x/y') from exception
         if not math.isfinite(x) or not math.isfinite(y):
             raise ValueError('Nav2 target coordinates must be finite')
-        targets.append({
+        target = {
             'x': x,
             'y': y,
-            'label': str(item.get('label') or phase),
-            'mission_phase': phase,
-        })
-    phases = tuple(item['mission_phase'] for item in targets)
-    if phases != DELIVERY_PHASES:
-        raise ValueError(
-            'Delivery plan must contain pickup, delivery and standby stops')
+            'label': str(item.get('label') or phase or '').strip(),
+        }
+        if not target['label']:
+            raise ValueError('Nav2 target needs a semantic label')
+        for field in ('mission_phase', 'task_id', 'task_phase'):
+            if item.get(field) is not None:
+                target[field] = str(item[field])
+        targets.append(target)
+    if request_type == 'delivery':
+        phases = tuple(item.get('mission_phase') for item in targets)
+        if phases != DELIVERY_PHASES:
+            raise ValueError(
+                'Delivery plan must contain pickup, delivery and standby stops')
+    elif not targets:
+        raise ValueError('Guide itinerary contains no Nav2 targets')
     return targets
 
 
@@ -366,6 +375,15 @@ def build_guide_plan(planner, request, task_catalog):
         task_id, phase = metadata
         waypoints[stop_index]['task_id'] = task_id
         waypoints[stop_index]['task_phase'] = phase
+    # The first graph node is the planner's semantic origin, not a new goal.
+    # During a live edit the robot may already be beyond its last acknowledged
+    # node, so sending it back to that node would create an unnecessary U-turn.
+    nodes = list(route.nodes)
+    if nodes and nodes[0] == start:
+        nodes = nodes[1:]
+        waypoints = waypoints[1:]
+    if not waypoints:
+        raise NavigationError('Guide itinerary produced no movement targets')
     return {
         'type': 'navigation_plan',
         'robot_id': 'robot_0',
@@ -378,6 +396,6 @@ def build_guide_plan(planner, request, task_catalog):
         'cost_profile': route.cost_profile,
         'distance_m': route.distance_m,
         'cost': route.cost,
-        'nodes': list(route.nodes),
+        'nodes': nodes,
         'waypoints': waypoints,
     }

@@ -248,6 +248,8 @@ class BusinessLogic:
             return []
 
         if event_type in ('route_failed', 'route_command_rejected'):
+            if robot_id == 'robot_0':
+                self.guide_state = 'FAILED'
             if robot_id == 'robot_1':
                 self.coffee_state = 'FAILED'
             return []

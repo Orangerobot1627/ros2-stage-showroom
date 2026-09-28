@@ -66,6 +66,7 @@ class RobotState:
             self.mission_started_at = stamp
             self.current_waypoint = None
             self.waypoint_index = 0
+            self.waypoint_total = int(event.get('total', 0))
         elif event_type == 'waypoint_reached':
             self.navigation_state = 'NAVIGATING'
             self.current_waypoint = event.get('label')
