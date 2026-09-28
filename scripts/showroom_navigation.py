@@ -25,8 +25,6 @@ def semantic_targets_from_plan(document):
         if not isinstance(item, dict):
             raise ValueError('Nav2 waypoint must be an object')
         phase = item.get('mission_phase')
-        if request_type == 'delivery' and phase not in DELIVERY_PHASES:
-            continue
         try:
             x = float(item['x'])
             y = float(item['y'])
@@ -46,10 +44,17 @@ def semantic_targets_from_plan(document):
                 target[field] = str(item[field])
         targets.append(target)
     if request_type == 'delivery':
-        phases = tuple(item.get('mission_phase') for item in targets)
+        # Keep every graph waypoint so Nav2 follows the validated showroom
+        # corridor. Mission phases mark business stops; they are not a filter
+        # for motion targets. Dropping intermediate points makes Nav2 plan a
+        # new long-range shortcut between pickup, visitor and standby.
+        phases = tuple(
+            item.get('mission_phase') for item in targets
+            if item.get('mission_phase') in DELIVERY_PHASES)
         if phases != DELIVERY_PHASES:
             raise ValueError(
-                'Delivery plan must contain pickup, delivery and standby stops')
+                'Delivery plan must contain ordered pickup, delivery and '
+                'standby stops')
     elif not targets:
         raise ValueError('Guide itinerary contains no Nav2 targets')
     return targets
@@ -367,7 +372,7 @@ def build_guide_plan(planner, request, task_catalog):
                 stop_metadata.append((unit.task_id, phase))
             elif stop_metadata:
                 stop_metadata[-1] = (unit.task_id, phase)
-    route = planner.plan(stops)
+    route = planner.plan(stops, context={'robot_id': 'robot_0'})
     waypoints = [dict(item) for item in route.waypoints]
     for item in waypoints:
         item['mission_id'] = mission_id

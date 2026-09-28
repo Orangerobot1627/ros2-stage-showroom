@@ -4,11 +4,13 @@
 from pathlib import Path
 import sys
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
-from showroom_navigation import (  # noqa: E402
+from showroom_navigation import (  # noqa: E402,I100
     build_delivery_plan,
     build_guide_plan,
     GraphRoutePlanner,
@@ -36,6 +38,16 @@ def main():
         assert len(route.stop_indices) == 3
         assert route.distance_m > 0.0
         distances[task_id] = route.distance_m
+
+        plan_document = build_delivery_plan(planner, {
+            'robot_id': 'robot_1',
+            'mission_id': f'plan-{task_id}',
+            'service_target': task_id,
+            'beverage': 'coffee',
+        })
+        nav2_route = semantic_targets_from_plan(plan_document)
+        assert len(nav2_route) == len(plan_document['waypoints'])
+        assert [item['label'] for item in nav2_route] == plan_document['nodes']
 
     vision = planner.plan_delivery('vision_hall')
     assert 'coffee_pickup_approach' in vision.nodes
@@ -65,10 +77,11 @@ def main():
         'vision_inside')]['mission_phase'] == 'delivery'
     assert document['waypoints'][-1]['mission_phase'] == 'standby'
     nav2_targets = semantic_targets_from_plan(document)
-    assert [item['mission_phase'] for item in nav2_targets] == [
+    assert len(nav2_targets) == len(document['waypoints'])
+    assert [item.get('mission_phase') for item in nav2_targets
+            if item.get('mission_phase') in ('pickup', 'delivery', 'standby')] == [
         'pickup', 'delivery', 'standby']
-    assert [item['label'] for item in nav2_targets] == [
-        'coffee_pickup', 'vision_inside', 'coffee_robot_standby']
+    assert [item['label'] for item in nav2_targets] == document['nodes']
     catalog = TaskUnitCatalog.from_files(
         ROOT / 'config' / 'task_units.yaml',
         ROOT / 'config' / 'routes.yaml')
@@ -91,6 +104,22 @@ def main():
     assert guide_targets[-1]['label'] == 'guide_destination'
     assert guide_targets[-1]['task_id'] == 'lounge'
     assert guide_targets[-1]['task_phase'] == 'task_end'
+    route_document = yaml.safe_load(
+        (ROOT / 'config' / 'routes.yaml').read_text(encoding='utf-8'))
+    original_guide_labels = [
+        item['label'] for item in
+        route_document['routes']['guide_full_route']['waypoints'][1:]
+    ]
+    default_guide = build_guide_plan(planner, {
+        'robot_id': 'robot_0',
+        'mission_id': 'guide-default',
+        'start': 'entrance',
+        'task_ids': [
+            'reception', 'technology_history', 'vision_hall',
+            'robotics_hall', 'time_tunnel', 'dance_hall', 'lounge',
+        ],
+    }, catalog)
+    assert default_guide['nodes'] == original_guide_labels
     resumed = build_guide_plan(planner, {
         'robot_id': 'robot_0',
         'mission_id': 'guide-8',

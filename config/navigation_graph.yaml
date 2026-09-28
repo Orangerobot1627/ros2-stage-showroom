@@ -8,9 +8,12 @@ route_sources:
   - coffee_delivery_route
 
 connectors:
-  - {from: coffee_pickup_approach, to: coffee_south_east}
-  - {from: lounge_delivery_approach, to: lounge_side_entry}
-  - {from: lounge_delivery, to: lounge_sofa_area}
+  # These edges let the service robot enter the visitor route. The guide robot
+  # must remain on guide_full_route so task order and exhibit progress stay
+  # identical to the original tour.
+  - {from: coffee_pickup_approach, to: coffee_south_east, allowed_robots: [robot_1]}
+  - {from: lounge_delivery_approach, to: lounge_side_entry, allowed_robots: [robot_1]}
+  - {from: lounge_delivery, to: lounge_sofa_area, allowed_robots: [robot_1]}
 
   # Map-validated transit shortcuts. The service robot uses these corridors to
   # avoid circling every display island while delivering to a named hall. The
