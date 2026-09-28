@@ -91,7 +91,11 @@ route_started
 - [Regulated Pure Pursuit](https://github.com/ros-navigation/navigation2/blob/main/nav2_regulated_pure_pursuit_controller/README.md)：低计算量路径跟踪和碰撞时间约束。
 - [Collision Monitor](https://github.com/ros-navigation/navigation2/blob/main/nav2_collision_monitor/params/collision_monitor_params.yaml)：独立速度安全层示例。
 - [stage_ros2](https://github.com/tuw-robotics/stage_ros2)：Stage 的 ROS 2 话题、TF 和多机器人前缀实现。
+- [Nav2 Simple Commander](https://github.com/ros-navigation/navigation2/blob/jazzy/nav2_simple_commander/nav2_simple_commander/robot_navigator.py)：Jazzy 中通过 Action goal handle 取消当前任务的官方参考。
 
-下一阶段需要为 Nav2 适配器补齐 `pause/resume/cancel` Action 控制，再把蓝色机器人的
-动态导览任务单元迁移到第二个命名空间 Nav2 栈。Gazebo/实机阶段再接 AMCL 或 SLAM，
-不要保留 Stage 专用的固定 `map -> odom` 变换。
+绿色机器人已经支持 `pause/resume/cancel`：暂停会取消当前 Nav2 Action，但保留任务计划
+和当前业务目标；恢复会从实时位置重新提交该目标，让 Nav2 重新规划；取消才会丢弃整个
+计划。这样现有的 20 秒人工接管租约同样适用于 Nav2 配送。
+
+下一阶段是把蓝色机器人的动态导览任务单元迁移到第二个命名空间 Nav2 栈。Gazebo/实机
+阶段再接 AMCL 或 SLAM，不要保留 Stage 专用的固定 `map -> odom` 变换。

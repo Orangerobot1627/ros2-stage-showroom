@@ -40,7 +40,10 @@ bt_navigator:
     robot_base_frame: robot_1/base_link
     odom_topic: odom
     bt_loop_duration: 20
-    default_server_timeout: 20
+    default_server_timeout: 50
+    # Jazzy defaults this to 50 ms. VMware plus 3x Stage time needs longer
+    # for FollowPath to stop and return its result during pause/cancel.
+    default_cancel_timeout: 1000
     wait_for_service_timeout: 2000
     action_server_result_timeout: 900.0
     navigators: [navigate_to_pose, navigate_through_poses]
