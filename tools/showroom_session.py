@@ -495,6 +495,37 @@ def open_monitor_terminals(domain, session_id, parent_pid):
     return processes
 
 
+def apply_voice_launch_arguments(launch_arguments, enabled, rms_threshold):
+    """Expand the concise voice option into launch arguments."""
+    launch_arguments = list(launch_arguments)
+    if enabled:
+        requested = {
+            item.split(':=', 1)[0]: item
+            for item in launch_arguments if ':=' in item
+        }
+        for name in ('enable_llm', 'enable_voice'):
+            value = requested.get(name)
+            if value is not None and value.lower() != f'{name}:=true':
+                raise SessionError(
+                    f'--voice 与显式参数 {value} 冲突。')
+            if value is None:
+                launch_arguments.append(f'{name}:=true')
+        explicit_threshold = any(
+            item.startswith('voice_rms_threshold:=')
+            for item in launch_arguments)
+        if rms_threshold is not None:
+            launch_arguments = [
+                item for item in launch_arguments
+                if not item.startswith('voice_rms_threshold:=')
+            ]
+            launch_arguments.append(
+                'voice_rms_threshold:='
+                f'{rms_threshold}')
+        elif not explicit_threshold:
+            launch_arguments.append('voice_rms_threshold:=150.0')
+    return launch_arguments
+
+
 def start_session(arguments):
     if shutil.which('ros2') is None:
         raise SessionError(
@@ -504,6 +535,8 @@ def start_session(arguments):
     launch_arguments = list(arguments.launch_arguments)
     if launch_arguments[:1] == ['--']:
         launch_arguments.pop(0)
+    launch_arguments = apply_voice_launch_arguments(
+        launch_arguments, arguments.voice, arguments.voice_rms_threshold)
     if any(item.startswith('ros_domain_id:=') for item in launch_arguments):
         raise SessionError(
             '请使用 --domain 指定频道，不要在 launch 参数中重复设置 '
@@ -978,6 +1011,12 @@ def build_parser():
     start.add_argument(
         '--monitor-lead-sec', type=float, default=1.0,
         help='监控窗口比 Stage 提前启动的秒数，默认 1.0 秒')
+    start.add_argument(
+        '--voice', action='store_true',
+        help='同时启用本地语音输入输出和 LLM')
+    start.add_argument(
+        '--voice-rms-threshold', type=float,
+        help='配合 --voice 设置语音触发阈值；会话默认 150')
     start.add_argument(
         'launch_arguments', nargs=argparse.REMAINDER,
         help='在 -- 后传递额外 launch 参数')

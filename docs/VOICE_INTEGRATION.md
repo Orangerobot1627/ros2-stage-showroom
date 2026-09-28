@@ -55,9 +55,16 @@ source install/setup.bash
 
 ```bash
 ros2 run demo_stage showroom_session start \
-  --launch-file showroom.launch.py --monitor-windows -- \
-  auto_drive:=true business_mode:=true business_auto_start:=false \
-  enable_llm:=true enable_voice:=true
+  --launch-file showroom_nav2.launch.py --monitor-windows --voice
+```
+
+`--voice` 会自动启用 LLM 和语音节点，并针对当前 VMware 麦克风把会话触发阈值设为
+`150`。需要进一步调节时可以显式覆盖：
+
+```bash
+ros2 run demo_stage showroom_session start \
+  --launch-file showroom_nav2.launch.py --monitor-windows \
+  --voice --voice-rms-threshold 120
 ```
 
 默认使用 PipeWire 的默认麦克风和扬声器。查看设备：

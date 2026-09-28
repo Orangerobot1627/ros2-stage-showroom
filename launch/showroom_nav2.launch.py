@@ -162,6 +162,7 @@ def generate_launch_description():
     business_auto_start = LaunchConfiguration('business_auto_start')
     enable_llm = LaunchConfiguration('enable_llm')
     enable_voice = LaunchConfiguration('enable_voice')
+    voice_rms_threshold = LaunchConfiguration('voice_rms_threshold')
     ros_domain_id = LaunchConfiguration('ros_domain_id')
     robots = {
         'robot_0': {'x': 0.0, 'y': -14.5, 'yaw': 1.57079632679},
@@ -173,6 +174,7 @@ def generate_launch_description():
         DeclareLaunchArgument('business_auto_start', default_value='false'),
         DeclareLaunchArgument('enable_llm', default_value='false'),
         DeclareLaunchArgument('enable_voice', default_value='false'),
+        DeclareLaunchArgument('voice_rms_threshold', default_value='250.0'),
         DeclareLaunchArgument('ros_domain_id', default_value='81'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(base_launch),
@@ -184,6 +186,7 @@ def generate_launch_description():
                 'business_auto_start': business_auto_start,
                 'enable_llm': enable_llm,
                 'enable_voice': enable_voice,
+                'voice_rms_threshold': voice_rms_threshold,
                 'navigation_backend': 'nav2',
                 'base_watchdog_timeout_sec': '3.0',
                 'one_tf_tree': 'true',

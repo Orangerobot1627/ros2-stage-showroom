@@ -94,6 +94,8 @@ class ShowroomASR(Node):
             self.get_parameter('queue_capacity').value))
         self.stopping = threading.Event()
         self.tts_speaking = threading.Event()
+        self.capture_failed = threading.Event()
+        self.capture_error = ''
         self.capture_process = None
         self.capture_thread = threading.Thread(
             target=self.capture_loop, name='showroom-microphone', daemon=True)
@@ -110,6 +112,8 @@ class ShowroomASR(Node):
         message.data = json.dumps(
             document, ensure_ascii=False, separators=(',', ':'))
         self.status_publisher.publish(message)
+        if state == 'ERROR':
+            self.get_logger().error(detail)
 
     def speaking_callback(self, message):
         """Pause recognition while synthesized speech is playing."""
@@ -139,10 +143,12 @@ class ShowroomASR(Node):
             self.capture_process = subprocess.Popen(
                 self.capture_command(),
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
         except OSError as exception:
-            self.publish_status('ERROR', f'无法启动 pw-record：{exception}')
+            self.capture_error = f'无法启动 pw-record：{exception}'
+            self.capture_failed.set()
+            self.publish_status('ERROR', self.capture_error)
             return
 
         self.publish_status('LISTENING', '麦克风采集已启动')
@@ -168,7 +174,18 @@ class ShowroomASR(Node):
                 self.publish_status('DROPPED', 'ASR 队列已满')
 
         if not self.stopping.is_set():
-            self.publish_status('ERROR', 'PipeWire 录音流已结束')
+            detail = ''
+            if self.capture_process.stderr is not None:
+                try:
+                    detail = self.capture_process.stderr.read().decode(
+                        errors='replace').strip()
+                except OSError:
+                    pass
+            self.capture_error = 'PipeWire 录音流已结束'
+            if detail:
+                self.capture_error += f'：{detail}'
+            self.capture_failed.set()
+            self.publish_status('ERROR', self.capture_error)
 
     def asr_loop(self):
         """Load faster-whisper once and transcribe queued utterances."""
@@ -184,7 +201,10 @@ class ShowroomASR(Node):
         except Exception as exception:
             self.publish_status('ERROR', f'Whisper 加载失败：{exception}')
             return
-        self.publish_status('LISTENING', 'Whisper 已就绪')
+        if self.capture_failed.is_set():
+            self.publish_status('ERROR', self.capture_error)
+        else:
+            self.publish_status('LISTENING', 'Whisper 已就绪')
 
         while not self.stopping.is_set():
             try:

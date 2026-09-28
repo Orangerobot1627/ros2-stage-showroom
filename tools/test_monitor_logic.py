@@ -127,6 +127,19 @@ def main():
     start = parser.parse_args(['start', '--monitor-windows'])
     assert start.monitor_windows is True
     assert start.monitor_lead_sec == 1.0
+    voice = parser.parse_args([
+        'start', '--voice', '--voice-rms-threshold', '150.0'])
+    assert voice.voice is True
+    assert voice.voice_rms_threshold == 150.0
+    voice_arguments = session_tool.apply_voice_launch_arguments(
+        [], enabled=True, rms_threshold=None)
+    assert 'enable_llm:=true' in voice_arguments
+    assert 'enable_voice:=true' in voice_arguments
+    assert 'voice_rms_threshold:=150.0' in voice_arguments
+    overridden_voice_arguments = session_tool.apply_voice_launch_arguments(
+        ['voice_rms_threshold:=180'], enabled=True, rms_threshold=120.0)
+    assert 'voice_rms_threshold:=120.0' in overridden_voice_arguments
+    assert 'voice_rms_threshold:=180' not in overridden_voice_arguments
     prelaunch = parser.parse_args([
         'monitor', '--domain', '88', '--session-id', 'test-session',
         '--parent-pid', '123',
