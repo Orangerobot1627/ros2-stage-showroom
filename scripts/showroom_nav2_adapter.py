@@ -5,12 +5,14 @@ import json
 import math
 
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import NavigateToPose
+from nav2_msgs.msg import CollisionMonitorState
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from showroom_nav2_health import Nav2HealthTracker
 from showroom_navigation import semantic_targets_from_plan
 from std_msgs.msg import String
 
@@ -24,6 +26,8 @@ class ShowroomNav2Adapter(Node):
         self.declare_parameter('plan_topic', '/showroom/nav2_plans')
         self.declare_parameter('event_topic', '/showroom/robot_events')
         self.declare_parameter(
+            'navigation_status_topic', '/showroom/navigation_status')
+        self.declare_parameter(
             'route_command_topic', '/showroom/route_commands')
         self.declare_parameter('action_name', 'navigate_to_pose')
         self.declare_parameter('frame_id', 'map')
@@ -31,6 +35,14 @@ class ShowroomNav2Adapter(Node):
         self.declare_parameter('inter_goal_delay_sec', 1.0)
         self.declare_parameter('goal_reject_retry_limit', 20)
         self.declare_parameter('goal_reject_retry_delay_sec', 0.5)
+        self.declare_parameter(
+            'collision_state_topic', 'collision_monitor_state')
+        self.declare_parameter('cmd_vel_topic', 'cmd_vel')
+        self.declare_parameter('health_publish_period_sec', 0.1)
+        self.declare_parameter('blocked_confirm_sec', 1.0)
+        self.declare_parameter('clear_confirm_sec', 0.35)
+        self.declare_parameter('linear_stopped_threshold', 0.02)
+        self.declare_parameter('angular_stopped_threshold', 0.05)
         self.robot_id = str(self.get_parameter('robot_id').value)
         self.frame_id = str(self.get_parameter('frame_id').value)
         event_qos = QoSProfile(
@@ -40,6 +52,9 @@ class ShowroomNav2Adapter(Node):
         )
         self.event_publisher = self.create_publisher(
             String, self.get_parameter('event_topic').value, event_qos)
+        self.navigation_status_publisher = self.create_publisher(
+            String, self.get_parameter('navigation_status_topic').value,
+            event_qos)
         self.client = ActionClient(
             self, NavigateToPose,
             self.get_parameter('action_name').value)
@@ -49,6 +64,23 @@ class ShowroomNav2Adapter(Node):
         self.create_subscription(
             String, self.get_parameter('route_command_topic').value,
             self.route_command_callback, event_qos)
+        self.create_subscription(
+            CollisionMonitorState,
+            self.get_parameter('collision_state_topic').value,
+            self.collision_state_callback, 10)
+        self.create_subscription(
+            Twist, self.get_parameter('cmd_vel_topic').value,
+            self.cmd_vel_callback, 10)
+        self.health = Nav2HealthTracker(
+            blocked_confirm_sec=self.get_parameter(
+                'blocked_confirm_sec').value,
+            clear_confirm_sec=self.get_parameter(
+                'clear_confirm_sec').value,
+            linear_stopped_threshold=self.get_parameter(
+                'linear_stopped_threshold').value,
+            angular_stopped_threshold=self.get_parameter(
+                'angular_stopped_threshold').value,
+        )
         self.active_plan = None
         self.targets = []
         self.target_index = 0
@@ -61,6 +93,10 @@ class ShowroomNav2Adapter(Node):
         self.route_started_emitted = False
         self.phase_started_indices = set()
         self.goal_reject_count = 0
+        self.create_timer(
+            max(0.05, float(self.get_parameter(
+                'health_publish_period_sec').value)),
+            self.publish_navigation_health)
         self.get_logger().info(
             f'Nav2 adapter ready for {self.robot_id}; waiting for action server')
 
@@ -75,6 +111,63 @@ class ShowroomNav2Adapter(Node):
         message.data = json.dumps(
             document, ensure_ascii=False, separators=(',', ':'))
         self.event_publisher.publish(message)
+
+    def simulation_time(self):
+        return self.get_clock().now().nanoseconds / 1e9
+
+    def collision_state_callback(self, message):
+        """Record the safety action selected by Nav2 Collision Monitor."""
+        self.health.update_collision_state(
+            message.action_type, message.polygon_name)
+
+    def cmd_vel_callback(self, message):
+        """Record the final velocity after Collision Monitor intervention."""
+        self.health.update_velocity(message.linear.x, message.angular.z)
+
+    def current_target_label(self):
+        if self.targets and self.target_index < len(self.targets):
+            return self.targets[self.target_index].get('label')
+        return None
+
+    def publish_navigation_health(self):
+        """Publish durable Nav2 health and business-level recovery events."""
+        now = self.simulation_time()
+        mission_active = (
+            self.active_plan is not None and self.route_started_emitted)
+        event_type = self.health.step(
+            now, mission_active=mission_active, paused=self.paused)
+        if event_type is not None:
+            fields = {
+                'backend': 'nav2',
+                'stamp': now,
+                'target': self.current_target_label(),
+                'collision_action': self.health.action_name,
+                'collision_polygon': self.health.polygon_name,
+                'block_count': self.health.block_count,
+                'last_blocked_duration_sec': (
+                    self.health.last_blocked_duration),
+            }
+            if event_type == 'blocked':
+                fields['blocked_since_sec'] = self.health.blocked_since
+            self.publish_event(event_type, **fields)
+
+        status = self.health.snapshot(
+            now, mission_active=mission_active, paused=self.paused)
+        status.update({
+            'type': 'navigation_status',
+            'robot_id': self.robot_id,
+            'navigation_backend': 'nav2',
+            'route': (self.active_plan or {}).get('route'),
+            'mission_id': self.mission_id(),
+            'target_waypoint': self.current_target_label(),
+            'finished': False,
+            'stamp': now,
+            'recovery_policy': 'NAV2_COLLISION_MONITOR_AUTO_RESUME',
+        })
+        message = String()
+        message.data = json.dumps(
+            status, ensure_ascii=False, separators=(',', ':'))
+        self.navigation_status_publisher.publish(message)
 
     def pose_for_target(self, index):
         target = self.targets[index]
@@ -139,6 +232,7 @@ class ShowroomNav2Adapter(Node):
         self.route_started_emitted = False
         self.phase_started_indices.clear()
         self.goal_reject_count = 0
+        self.health.reset_transient()
         self.send_current_target()
 
     def replace_active_plan(self):
@@ -403,6 +497,7 @@ class ShowroomNav2Adapter(Node):
         self.route_started_emitted = False
         self.phase_started_indices.clear()
         self.goal_reject_count = 0
+        self.health.reset_transient()
 
 
 def main(args=None):

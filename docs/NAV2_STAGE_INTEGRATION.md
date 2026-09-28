@@ -97,6 +97,27 @@ route_started
 - [stage_ros2](https://github.com/tuw-robotics/stage_ros2)：Stage 的 ROS 2 话题、TF 和多机器人前缀实现。
 - [Nav2 Simple Commander](https://github.com/ros-navigation/navigation2/blob/jazzy/nav2_simple_commander/nav2_simple_commander/robot_navigator.py)：Jazzy 中通过 Action goal handle 取消当前任务的官方参考。
 
+## 阻挡、恢复与双机器人相遇
+
+两台机器人都由 Stage 激光雷达观测环境。另一台机器人的实体会进入激光数据，
+随后进入各自 Nav2 的障碍层和 Collision Monitor，因此现阶段不需要额外的交通
+预约服务器。
+
+`showroom_nav2_adapter.py` 同时订阅本机器人命名空间中的：
+
+- `collision_monitor_state`：Nav2 安全层当前选择的动作；
+- `cmd_vel`：经过 Collision Monitor 后最终发给 Stage 的速度。
+
+仅当安全层持续介入、最终线速度和角速度都接近零，并保持超过 1 秒，适配器才
+发布一次 `blocked`。正常绕障中的短暂 `APPROACH` 或减速不会累计成阻挡。机器人
+重新运动或安全层解除后，经过 0.35 秒去抖会发布 `obstacle_cleared`，Nav2 保留的
+目标会继续执行。两台适配器还以 10 Hz 向 `/showroom/navigation_status` 发布持久化
+心跳，因此中文监控可以显示当前阻挡时长、上次阻挡时长、累计次数和恢复状态。
+
+当前相遇策略是让 Nav2 把对方当作动态障碍物并自动避让或等待。固定业务优先级
+适合作为下一层仲裁规则：导览机器人优先，服务机器人在狭窄位置主动等待；它不
+改变 Nav2 的安全停车和自动恢复闭环。
+
 两台机器人都支持 `pause/resume/cancel`：暂停会取消当前 Action，但保留计划与当前业务
 目标；恢复会从实时位置重新提交目标。蓝色机器人收到 `skip_current`、`next_task`、
 `repeat_current`、`skip_task` 或 `visit_only` 后，会在旧 goal 完成取消时原子替换计划，

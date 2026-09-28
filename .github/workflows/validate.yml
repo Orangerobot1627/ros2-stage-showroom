@@ -31,6 +31,8 @@ jobs:
         run: python tools/test_plan.py
       - name: Test semantic navigation
         run: python tools/test_navigation.py
+      - name: Test Nav2 obstacle health and recovery
+        run: python tools/test_nav2_health.py
       - name: Test LLM command contract
         run: python tools/test_llm_bridge_logic.py
       - name: Test voice core
