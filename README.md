@@ -220,7 +220,7 @@ ros2 run demo_stage showroom_session start -- \
 | `/showroom/command` | LLM/终端 → 任务管理器 | 访客意图和操作命令 |
 | `/showroom/route_commands` | 任务管理器 → 路线执行器 | 启动、暂停、恢复或取消路线 |
 | `/showroom/robot_events` | 路线执行器 → 任务管理器 | 到点、阻塞、清障和完成事件 |
-| `/showroom/navigation_status` | 路线执行器 → 监控节点 | 10 Hz 导航状态、阻挡次数与持续时间快照 |
+| `/showroom/navigation_status` | 路线执行器 → 监控节点 | 10 Hz 导航状态、目标剩余距离、预计到达时间、Nav2 恢复次数及阻挡快照 |
 | `/showroom/status` | 任务管理器 → 外部系统 | 双机器人业务状态快照 |
 | `/showroom/monitor` | 监控节点 → RQt/终端 | 双机器人运行、障碍与恢复状态快照 |
 | `/showroom/response` | 任务管理器 → LLM/界面 | 命令接受或拒绝结果 |
@@ -360,6 +360,9 @@ ros2 run demo_stage showroom_session detail-monitor
 时对应机器人的 `navigation_state` 变为 `BLOCKED`，`recovery_state` 变为
 `WAITING_FOR_CLEARANCE`；移开障碍后分别恢复为 `NAVIGATING` 和
 `RESUMED_AFTER_CLEARANCE`，同时保留本次阻塞时长和累计阻塞次数。
+Nav2 模式下，中文看板还会显示到当前目标的剩余距离、预计到达时间、官方行为树的
+累计恢复次数及反馈更新时间；这些数据来自 `NavigateToPose` action feedback，不是按
+机器人速度自行估算。
 
 ## 模拟杂物挡路与恢复
 

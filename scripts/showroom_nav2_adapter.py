@@ -10,9 +10,10 @@ from nav2_msgs.action import NavigateToPose
 from nav2_msgs.msg import CollisionMonitorState
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from showroom_nav2_health import Nav2HealthTracker
+from showroom_nav2_health import Nav2ActionProgress, Nav2HealthTracker
 from showroom_navigation import semantic_targets_from_plan
 from std_msgs.msg import String
 
@@ -81,6 +82,7 @@ class ShowroomNav2Adapter(Node):
             angular_stopped_threshold=self.get_parameter(
                 'angular_stopped_threshold').value,
         )
+        self.action_progress = Nav2ActionProgress()
         self.active_plan = None
         self.targets = []
         self.target_index = 0
@@ -163,6 +165,7 @@ class ShowroomNav2Adapter(Node):
             'finished': False,
             'stamp': now,
             'recovery_policy': 'NAV2_COLLISION_MONITOR_AUTO_RESUME',
+            'action_feedback': self.action_progress.snapshot(now),
         })
         message = String()
         message.data = json.dumps(
@@ -234,6 +237,7 @@ class ShowroomNav2Adapter(Node):
         self.phase_started_indices.clear()
         self.goal_reject_count = 0
         self.health.reset_transient()
+        self.action_progress.reset_mission()
         self.send_current_target()
 
     def replace_active_plan(self):
@@ -360,8 +364,15 @@ class ShowroomNav2Adapter(Node):
         target = self.targets[self.target_index]
         goal = NavigateToPose.Goal()
         goal.pose = self.pose_for_target(self.target_index)
-        future = self.client.send_goal_async(goal)
-        future.add_done_callback(self.goal_response_callback)
+        generation = self.action_progress.begin_target()
+        future = self.client.send_goal_async(
+            goal,
+            feedback_callback=lambda message, token=generation: (
+                self.navigation_feedback_callback(message, token)),
+        )
+        future.add_done_callback(
+            lambda response, token=generation: self.goal_response_callback(
+                response, token))
         context = (
             target.get('mission_phase') or target.get('task_id')
             or (self.active_plan or {}).get('request_type', 'semantic_target'))
@@ -369,7 +380,27 @@ class ShowroomNav2Adapter(Node):
             f'Nav2 target {self.target_index + 1}/{len(self.targets)}: '
             f'{target["label"]} ({context})')
 
-    def goal_response_callback(self, future):
+    @staticmethod
+    def duration_seconds(duration):
+        return float(duration.sec) + float(duration.nanosec) / 1e9
+
+    def navigation_feedback_callback(self, message, generation):
+        """Record official NavigateToPose progress for monitor consumers."""
+        feedback = message.feedback
+        self.action_progress.update(
+            generation,
+            navigation_time_sec=self.duration_seconds(
+                feedback.navigation_time),
+            estimated_time_remaining_sec=self.duration_seconds(
+                feedback.estimated_time_remaining),
+            distance_remaining_m=feedback.distance_remaining,
+            recovery_count=feedback.number_of_recoveries,
+            received_at=self.simulation_time(),
+        )
+
+    def goal_response_callback(self, future, generation):
+        if generation != self.action_progress.generation:
+            return
         goal_handle = future.result()
         document = self.active_plan or {}
         mission_id = document.get('mission_id')
@@ -412,16 +443,21 @@ class ShowroomNav2Adapter(Node):
                     backend='nav2')
             self.phase_started_indices.add(self.target_index)
         result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self.result_callback)
+        result_future.add_done_callback(
+            lambda result, token=generation: self.result_callback(
+                result, token))
         if self.pending_control in ('pause', 'cancel', 'replace'):
             control = self.pending_control
             self.pending_control = None
             self.request_goal_cancel(control)
 
-    def result_callback(self, future):
+    def result_callback(self, future, generation):
+        if generation != self.action_progress.generation:
+            return
         document = self.active_plan or {}
         mission_id = document.get('mission_id')
         status = future.result().status
+        self.action_progress.finish_target(generation)
         self.goal_handle = None
         if status == GoalStatus.STATUS_CANCELED:
             reason = self.cancel_reason
@@ -499,6 +535,7 @@ class ShowroomNav2Adapter(Node):
         self.phase_started_indices.clear()
         self.goal_reject_count = 0
         self.health.reset_transient()
+        self.action_progress.reset_mission()
 
 
 def main(args=None):
@@ -506,7 +543,7 @@ def main(args=None):
     node = ShowroomNav2Adapter()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

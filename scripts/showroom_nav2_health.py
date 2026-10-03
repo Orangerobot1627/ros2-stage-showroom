@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Pure state machine for Nav2 obstacle intervention and blocked recovery."""
+"""Pure state machines for Nav2 progress and obstacle recovery telemetry."""
+
+import math
 
 
 ACTION_NAMES = {
@@ -9,6 +11,88 @@ ACTION_NAMES = {
     3: 'APPROACH',
     4: 'LIMIT',
 }
+
+
+class Nav2ActionProgress:
+    """Track one mission's NavigateToPose feedback without ROS dependencies."""
+
+    def __init__(self):
+        self.generation = 0
+        self.completed_recoveries = 0
+        self._reset_target()
+
+    def _reset_target(self):
+        self.action_active = False
+        self.navigation_time_sec = None
+        self.estimated_time_remaining_sec = None
+        self.distance_remaining_m = None
+        self.target_recoveries = 0
+        self.feedback_received_at = None
+
+    def reset_mission(self):
+        """Invalidate late callbacks and clear mission-level counters."""
+        self.generation += 1
+        self.completed_recoveries = 0
+        self._reset_target()
+
+    def begin_target(self):
+        """Start a new action generation and return its callback token."""
+        self.generation += 1
+        self._reset_target()
+        self.action_active = True
+        return self.generation
+
+    @staticmethod
+    def _nonnegative(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number) or number < 0.0:
+            return None
+        return number
+
+    def update(self, generation, *, navigation_time_sec,
+               estimated_time_remaining_sec, distance_remaining_m,
+               recovery_count, received_at):
+        """Accept feedback only for the currently active action goal."""
+        if generation != self.generation or not self.action_active:
+            return False
+        self.navigation_time_sec = self._nonnegative(navigation_time_sec)
+        self.estimated_time_remaining_sec = self._nonnegative(
+            estimated_time_remaining_sec)
+        self.distance_remaining_m = self._nonnegative(distance_remaining_m)
+        try:
+            self.target_recoveries = max(0, int(recovery_count))
+        except (TypeError, ValueError):
+            self.target_recoveries = 0
+        self.feedback_received_at = self._nonnegative(received_at)
+        return True
+
+    def finish_target(self, generation):
+        """Commit the current action's recovery count once it terminates."""
+        if generation != self.generation or not self.action_active:
+            return False
+        self.completed_recoveries += self.target_recoveries
+        self.target_recoveries = 0
+        self.action_active = False
+        return True
+
+    def snapshot(self, now):
+        feedback_age = None
+        if self.feedback_received_at is not None:
+            feedback_age = max(0.0, float(now) - self.feedback_received_at)
+        return {
+            'action_active': self.action_active,
+            'navigation_time_sec': self.navigation_time_sec,
+            'estimated_time_remaining_sec': (
+                self.estimated_time_remaining_sec),
+            'distance_remaining_m': self.distance_remaining_m,
+            'number_of_recoveries': (
+                self.completed_recoveries + self.target_recoveries),
+            'target_recoveries': self.target_recoveries,
+            'feedback_age_sec': feedback_age,
+        }
 
 
 class Nav2HealthTracker:

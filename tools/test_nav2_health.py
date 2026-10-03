@@ -8,10 +8,63 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
-from showroom_nav2_health import Nav2HealthTracker  # noqa: E402
+from showroom_nav2_health import (  # noqa: E402
+    Nav2ActionProgress,
+    Nav2HealthTracker,
+)
 
 
 def main():
+    progress = Nav2ActionProgress()
+    first_goal = progress.begin_target()
+    assert progress.update(
+        first_goal,
+        navigation_time_sec=4.5,
+        estimated_time_remaining_sec=8.25,
+        distance_remaining_m=3.75,
+        recovery_count=1,
+        received_at=10.0,
+    ) is True
+    active_progress = progress.snapshot(10.2)
+    assert active_progress['action_active'] is True
+    assert active_progress['distance_remaining_m'] == 3.75
+    assert active_progress['estimated_time_remaining_sec'] == 8.25
+    assert active_progress['number_of_recoveries'] == 1
+    assert round(active_progress['feedback_age_sec'], 6) == 0.2
+
+    # Completed target recoveries remain cumulative across the next waypoint.
+    assert progress.finish_target(first_goal) is True
+    second_goal = progress.begin_target()
+    assert progress.update(
+        second_goal,
+        navigation_time_sec=1.0,
+        estimated_time_remaining_sec=float('inf'),
+        distance_remaining_m=-1.0,
+        recovery_count=2,
+        received_at=12.0,
+    ) is True
+    second_progress = progress.snapshot(12.0)
+    assert second_progress['distance_remaining_m'] is None
+    assert second_progress['estimated_time_remaining_sec'] is None
+    assert second_progress['number_of_recoveries'] == 3
+
+    # A late callback from an old goal cannot overwrite the current one.
+    assert progress.update(
+        first_goal,
+        navigation_time_sec=99.0,
+        estimated_time_remaining_sec=99.0,
+        distance_remaining_m=99.0,
+        recovery_count=99,
+        received_at=13.0,
+    ) is False
+    assert progress.snapshot(13.0)['number_of_recoveries'] == 3
+
+    progress.reset_mission()
+    reset_progress = progress.snapshot(14.0)
+    assert reset_progress['action_active'] is False
+    assert reset_progress['distance_remaining_m'] is None
+    assert reset_progress['number_of_recoveries'] == 0
+
     tracker = Nav2HealthTracker(
         blocked_confirm_sec=1.0, clear_confirm_sec=0.3)
 
@@ -56,7 +109,7 @@ def main():
     assert idle['local_planner']['state'] == 'TRACKING'
     assert idle['collision_monitor']['action_name'] == 'DO_NOTHING'
 
-    print('Nav2 obstacle health and recovery: OK')
+    print('Nav2 action progress, obstacle health, and recovery: OK')
 
 
 if __name__ == '__main__':

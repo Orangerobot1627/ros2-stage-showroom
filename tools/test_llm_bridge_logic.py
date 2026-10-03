@@ -243,11 +243,20 @@ def main():
             'navigation_state': 'NAVIGATING',
             'current_waypoint': 'vision_display',
             'pose': {'x': 123},
+            'nav2_feedback': {
+                'distance_remaining_m': 2.75,
+                'estimated_time_remaining_sec': 6.5,
+                'number_of_recoveries': 1,
+            },
         }}},
     )
     assert compact['business']['guide_state'] == 'TOURING'
     assert 'private' not in compact['business']
     assert 'pose' not in compact['robots']['robot_0']
+    assert compact['robots']['robot_0']['distance_remaining_m'] == 2.75
+    assert compact['robots']['robot_0'][
+        'estimated_time_remaining_sec'] == 6.5
+    assert compact['robots']['robot_0']['nav2_recovery_count'] == 1
 
     compact = compact_context({
         'current_task': {

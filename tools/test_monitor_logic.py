@@ -81,12 +81,24 @@ def main():
         'last_blocked_duration_sec': 2.5,
         'block_count': 2,
         'front_clearance_m': 0.42,
+        'action_feedback': {
+            'action_active': True,
+            'navigation_time_sec': 4.0,
+            'estimated_time_remaining_sec': 8.5,
+            'distance_remaining_m': 3.25,
+            'number_of_recoveries': 1,
+            'target_recoveries': 1,
+            'feedback_age_sec': 0.05,
+        },
     }, 40.0)
     heartbeat_blocked = heartbeat_robot.snapshot(40.0)
     assert heartbeat_blocked['navigation_state'] == 'BLOCKED'
     assert heartbeat_blocked['blocked_duration_sec'] == 5.0
     assert heartbeat_blocked['block_count'] == 2
     assert heartbeat_blocked['front_clearance_m'] == 0.42
+    assert heartbeat_blocked['nav2_feedback']['distance_remaining_m'] == 3.25
+    assert heartbeat_blocked['nav2_feedback'][
+        'estimated_time_remaining_sec'] == 8.5
     heartbeat_robot.handle_navigation_status({
         'active': True,
         'finished': False,
@@ -121,6 +133,8 @@ def main():
     assert '数据序号 42' in dashboard
     assert '蓝色导览机器人: 正在导航' in dashboard
     assert '障碍已清除，导航已继续' in dashboard
+    assert 'Nav2进度: 距当前目标 3.25 m' in dashboard
+    assert '恢复 1 次' in dashboard
     assert '配送触发点=时空隧道南段（未到达）' in dashboard
 
     parser = session_tool.build_parser()

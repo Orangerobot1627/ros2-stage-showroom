@@ -154,6 +154,20 @@ def render_robot_summary(name, robot):
         f'{velocity.get("angular_z", 0.0):.2f} rad/s  |  '
         f'前方净空 {clearance_text}',
     ]
+    nav2_feedback = robot.get('nav2_feedback') or {}
+    remaining = nav2_feedback.get('distance_remaining_m')
+    eta = nav2_feedback.get('estimated_time_remaining_sec')
+    if isinstance(remaining, (int, float)):
+        eta_text = format_duration(eta)
+        feedback_age = nav2_feedback.get('feedback_age_sec')
+        age_text = (
+            f'{feedback_age:.1f}s 前更新'
+            if isinstance(feedback_age, (int, float)) else '更新时间未知')
+        lines.append(
+            f'  Nav2进度: 距当前目标 {remaining:.2f} m  |  '
+            f'预计 {eta_text}  |  '
+            f'恢复 {nav2_feedback.get("number_of_recoveries", 0)} 次  |  '
+            f'{age_text}')
     if robot.get('navigation_state') == 'AVOIDING':
         local = robot.get('local_planner') or {}
         lines.append(

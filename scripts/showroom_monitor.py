@@ -9,6 +9,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.clock import Clock, ClockType
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -44,6 +45,15 @@ class RobotState:
         self.local_planner = {
             'state': 'TRACKING', 'active': False,
             'avoidance_count': 0,
+        }
+        self.nav2_feedback = {
+            'action_active': False,
+            'navigation_time_sec': None,
+            'estimated_time_remaining_sec': None,
+            'distance_remaining_m': None,
+            'number_of_recoveries': 0,
+            'target_recoveries': 0,
+            'feedback_age_sec': None,
         }
 
     @staticmethod
@@ -134,6 +144,12 @@ class RobotState:
         local_planner = status.get('local_planner')
         if isinstance(local_planner, dict):
             self.local_planner = local_planner
+        action_feedback = status.get('action_feedback')
+        if isinstance(action_feedback, dict):
+            self.nav2_feedback = {
+                key: action_feedback.get(key, default)
+                for key, default in self.nav2_feedback.items()
+            }
 
         was_blocked = self.navigation_state == 'BLOCKED'
         if status.get('blocked'):
@@ -197,6 +213,7 @@ class RobotState:
             'recovery_policy': 'LOCAL_BYPASS_THEN_STOP_IF_UNSAFE',
             'recovery_state': self.recovery_state,
             'local_planner': self.local_planner,
+            'nav2_feedback': self.nav2_feedback,
             'last_event': self.last_event,
         }
 
@@ -380,7 +397,7 @@ def main(args=None):
     node = ShowroomMonitor()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         try:

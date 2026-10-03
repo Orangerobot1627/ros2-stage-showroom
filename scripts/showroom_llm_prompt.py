@@ -165,12 +165,17 @@ def compact_context(business, monitor):
     compact_robots = {}
     for robot_id in ('robot_0', 'robot_1'):
         robot = robots.get(robot_id) or {}
+        feedback = robot.get('nav2_feedback') or {}
         compact_robots[robot_id] = {
             'navigation_state': robot.get('navigation_state'),
             'current_waypoint': robot.get('current_waypoint'),
             'obstacle_detected': robot.get('obstacle_detected'),
             'front_clearance_m': robot.get('front_clearance_m'),
             'block_count': robot.get('block_count'),
+            'distance_remaining_m': feedback.get('distance_remaining_m'),
+            'estimated_time_remaining_sec': feedback.get(
+                'estimated_time_remaining_sec'),
+            'nav2_recovery_count': feedback.get('number_of_recoveries'),
         }
     return {
         'business': {
