@@ -25,7 +25,14 @@ define showroom_diff_base position
 (
   drive "diff"
   localization "odom"
-  odom_error [ 0.01 0.01 0.00 0.02 ]
+  # map->odom is fixed in the Stage Nav2 profile, so this simulation must use
+  # deterministic odometry. Re-enable noise only together with AMCL or another
+  # localization node that continuously corrects map->odom.
+  odom_error [ 0.00 0.00 0.00 0.00 ]
+  # Stage's odometry integrator uses the world simulation step as dt each
+  # time this model updates. Keep this equal to interval_sim (50 ms), or odom
+  # and ground truth diverge by their update-rate ratio.
+  update_interval 50
 
   obstacle_return 1
   ranger_return 0.50

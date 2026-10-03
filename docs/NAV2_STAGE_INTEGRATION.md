@@ -130,6 +130,18 @@ route_started
 还负责暂停、恢复、任务替换以及业务事件；其逐航点执行模型与官方 Waypoint Follower
 一致。
 
+## Stage 里程计时间基准
+
+`showroom_final.world` 和 `showroom_nav2.world` 的 `interval_sim` 必须与
+`showroom_diff_base` 的 `update_interval` 相同。Stage 的 odom 定位模型每次更新时使用
+世界仿真步长积分；如果世界以 50 ms 更新，而 position 模型仍使用默认的 100 ms 更新，
+`/robot_N/odom` 只会累计真实位移的一半。Nav2 会在错误的 TF 位姿上判断目标已经到达，
+而 Stage 中的机器人已经越过航点数米。
+
+本项目将两者统一为 50 ms，`tools/validate_project.py` 也会在构建和 GitHub Actions 中
+拒绝任何不一致的配置。当前 Stage Nav2 配置使用固定 `map -> odom`，所以里程计噪声设为
+零；以后接入 AMCL 或其他能够持续修正 `map -> odom` 的定位节点后，才应重新加入噪声。
+
 两台机器人都支持 `pause/resume/cancel`：暂停会取消当前 Action，但保留计划与当前业务
 目标；恢复会从实时位置重新提交目标。蓝色机器人收到 `skip_current`、`next_task`、
 `repeat_current`、`skip_task` 或 `visit_only` 后，会在旧 goal 完成取消时原子替换计划，

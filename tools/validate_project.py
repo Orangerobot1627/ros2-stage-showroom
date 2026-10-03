@@ -41,6 +41,7 @@ def main():
     ET.parse(ROOT / 'package.xml')
 
     includes = []
+    simulation_intervals = {}
     for world_name in ('showroom_final.world', 'showroom_nav2.world'):
         world = ROOT / 'world' / world_name
         world_text = world.read_text(encoding='utf-8')
@@ -53,6 +54,11 @@ def main():
                 r'^speedup\s+[0-9.]+\s*$', world_text, re.MULTILINE):
             raise ValueError(
                 f'{world_name} must declare an explicit speedup')
+        interval_match = re.search(
+            r'^interval_sim\s+([0-9]+)\s*$', world_text, re.MULTILINE)
+        if interval_match is None:
+            raise ValueError(f'{world_name} must declare interval_sim')
+        simulation_intervals[world_name] = int(interval_match.group(1))
         world_includes = re.findall(r'include\s+"([^"]+)"', world_text)
         missing = [
             name for name in world_includes
@@ -61,6 +67,34 @@ def main():
             raise FileNotFoundError(
                 f'Missing Stage includes in {world_name}: {missing}')
         includes.extend(world_includes)
+
+    robot_models = (
+        ROOT / 'world' / 'include' / 'showroom_robots.inc').read_text(
+            encoding='utf-8')
+    position_interval_match = re.search(
+        r'^\s*update_interval\s+([0-9]+)\s*$',
+        robot_models, re.MULTILINE)
+    if position_interval_match is None:
+        raise ValueError(
+            'showroom_diff_base must declare update_interval explicitly')
+    position_interval = int(position_interval_match.group(1))
+    odom_error_match = re.search(
+        r'^\s*odom_error\s+\[\s*([^]]+)\]\s*$',
+        robot_models, re.MULTILINE)
+    if odom_error_match is None:
+        raise ValueError('showroom_diff_base must declare odom_error')
+    odom_errors = [
+        float(value) for value in odom_error_match.group(1).split()]
+    if len(odom_errors) != 4 or any(odom_errors):
+        raise ValueError(
+            'Fixed map->odom requires deterministic zero Stage odom_error')
+    mismatched_worlds = [
+        name for name, interval in simulation_intervals.items()
+        if interval != position_interval]
+    if mismatched_worlds:
+        raise ValueError(
+            'Stage position update_interval must equal interval_sim; '
+            f'position={position_interval}, worlds={simulation_intervals}')
 
     test_obstacles = ROOT / 'world' / 'include' / 'showroom_test_obstacles.inc'
     obstacle_text = test_obstacles.read_text(encoding='utf-8')
@@ -126,6 +160,10 @@ def main():
     yaml_mode = 'PyYAML parse' if yaml is not None else 'basic structure'
     print(f'YAML {yaml_mode} OK: {len(yaml_files)} files')
     print(f'Stage includes OK: {includes}')
+    print(
+        f'Stage odometry/update interval: {position_interval} ms '
+        '(matches all worlds)')
+    print('Stage odometry noise: zero (fixed map->odom profile)')
     print('Draggable laser-visible test obstacle: OK')
     print(f'Stage route marker count: {marker_count}')
     print('package.xml and 1000x700 PGM header: OK')
