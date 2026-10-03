@@ -27,6 +27,17 @@ class ActionPolicy:
             raise ActionPolicyError('Invalid minimum/default override duration')
         if self.default_duration > self.max_duration:
             raise ActionPolicyError('Default override exceeds maximum duration')
+        temporary = document.get('temporary_navigation') or {}
+        self.temporary_timeout = float(
+            temporary.get('default_timeout_sec', 300.0))
+        self.temporary_max_timeout = float(
+            temporary.get('max_timeout_sec', 600.0))
+        self.temporary_max_dwell = float(
+            temporary.get('max_dwell_sec', 120.0))
+        if not 1.0 <= self.temporary_timeout <= self.temporary_max_timeout:
+            raise ActionPolicyError('Invalid temporary navigation timeout')
+        if self.temporary_max_dwell < 0.0:
+            raise ActionPolicyError('Invalid temporary dwell limit')
 
         robots = document.get('robots') or {}
         actions = document.get('actions') or {}
@@ -94,6 +105,16 @@ class ActionPolicy:
         """Use the configured default and clamp visitor durations."""
         value = self.default_duration if requested is None else float(requested)
         return max(self.min_duration, min(self.max_duration, value))
+
+    def navigation_timeout(self, requested=None):
+        """Clamp one temporary navigation safety timeout."""
+        value = self.temporary_timeout if requested is None else float(requested)
+        return max(1.0, min(self.temporary_max_timeout, value))
+
+    def dwell_duration(self, requested=None):
+        """Clamp how long the guide remains at a temporary destination."""
+        value = 0.0 if requested is None else float(requested)
+        return max(0.0, min(self.temporary_max_dwell, value))
 
 
 @dataclass
@@ -166,4 +187,56 @@ class OverrideLeaseBook:
                 'resume_required': lease.resume_required,
             }
             for robot_id, lease in self._leases.items()
+        }
+
+
+@dataclass
+class TemporaryMissionLease:
+    """Suspended guide itinerary around one bounded visitor destination."""
+
+    mission_id: str
+    target_task_id: str
+    base_task_ids: tuple
+    skipped_task_ids: tuple
+    resume_task_id: str
+    base_state: str
+    started_at: float
+    safety_deadline: float
+    dwell_sec: float
+    phase: str = 'NAVIGATING'
+    arrived_at: float = None
+    dwell_until: float = None
+
+    def arrive(self, now):
+        """Start the requested dwell and report whether restore is immediate."""
+        self.arrived_at = float(now)
+        if self.dwell_sec <= 0.0:
+            self.phase = 'RESTORE_PENDING'
+            return True
+        self.phase = 'DWELLING'
+        self.dwell_until = self.arrived_at + self.dwell_sec
+        return False
+
+    def due(self, now):
+        """Return the restore reason once travel or dwell has expired."""
+        now = float(now)
+        if self.phase == 'DWELLING':
+            return 'dwell_completed' if now >= self.dwell_until else None
+        if self.phase == 'RESTORE_PENDING':
+            return 'destination_reached'
+        return 'navigation_timeout' if now >= self.safety_deadline else None
+
+    def snapshot(self, now):
+        """Return a compact status document for monitoring and the LLM."""
+        deadline = (
+            self.dwell_until if self.phase == 'DWELLING'
+            else self.safety_deadline)
+        return {
+            'mission_id': self.mission_id,
+            'target_task_id': self.target_task_id,
+            'phase': self.phase,
+            'remaining_sec': round(max(0.0, deadline - float(now)), 3),
+            'dwell_sec': self.dwell_sec,
+            'resume_task_id': self.resume_task_id,
+            'base_state': self.base_state,
         }

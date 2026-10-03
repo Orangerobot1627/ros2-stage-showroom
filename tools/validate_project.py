@@ -146,8 +146,8 @@ def main():
             for x, y in generator.interpolate(start, goal):
                 samples = [(x, y)] + [
                     (
-                        x + 0.42 * math.cos(angle),
-                        y + 0.42 * math.sin(angle),
+                        x + 0.44 * math.cos(angle),
+                        y + 0.44 * math.sin(angle),
                     )
                     for angle in sample_angles
                 ]
@@ -167,8 +167,8 @@ def main():
     print('Draggable laser-visible test obstacle: OK')
     print(f'Stage route marker count: {marker_count}')
     print('package.xml and 1000x700 PGM header: OK')
-    print('Route clearance (0.42 m): OK')
-    print('Navigation connector clearance (0.42 m): OK')
+    print('Route clearance (generated route safety profile): OK')
+    print('Navigation connector clearance (0.44 m): OK')
 
 
 if __name__ == '__main__':

@@ -37,6 +37,19 @@ def main():
     assert selection[0]['tasks'] == ['vision_hall', 'dance_hall']
     assert selection[1] == {
         'action': 'bypass_obstacle', 'robot': 'guide'}
+    temporary = validate_plan([
+        {
+            'action': 'temporary_visit', 'target': 'time_tunnel',
+            'dwell_sec': 20, 'timeout_sec': 240,
+        },
+        {'action': 'announce', 'text': '临时参观结束，继续原导览。'},
+    ])
+    assert temporary[0] == {
+        'action': 'temporary_visit',
+        'target': 'time_tunnel',
+        'dwell_sec': 20.0,
+        'timeout_sec': 240.0,
+    }
 
     executor = SequentialPlanExecutor()
     executor.start('plan-1', actions, source='llm')

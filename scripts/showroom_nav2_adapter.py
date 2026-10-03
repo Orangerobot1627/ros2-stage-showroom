@@ -213,7 +213,8 @@ class ShowroomNav2Adapter(Node):
             return
         if self.active_plan is not None:
             if self.robot_id != 'robot_0' \
-                    or document.get('request_type') != 'guide_itinerary':
+                    or document.get('request_type') not in (
+                        'guide_itinerary', 'temporary_visit'):
                 self.publish_event(
                     'route_failed', mission_id=document.get('mission_id'),
                     reason='Nav2 adapter already has an active plan')

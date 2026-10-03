@@ -17,10 +17,9 @@
   -> /robot_N/cmd_vel
 ```
 
-旧适配器曾把整条首尾相同的配送环线作为一个 `NavigateThroughPoses` 目标。重规划期间，
-Nav2 会逐步删除已经通过的航点，闭环末端可能变成空路径。当前适配器只保留三个业务
-目标，每一段完成后等待 Action Server 收尾，再提交下一段。业务层仍会收到 `pickup`、
-`delivery`、`returning` 和 `standby` 事件。
+适配器把语义图展开的每个走廊航点依次提交为 `NavigateToPose`。这保留稳定业务
+路线，同时让 Nav2 在两个相邻航点之间重新规划和使用激光雷达避障。业务层会收到
+`pickup`、`delivery`、`returning` 和 `standby` 等阶段事件。
 
 ## 计算量取舍
 
@@ -30,7 +29,10 @@ Nav2 会逐步删除已经通过的航点，闭环末端可能变成空路径。
 - NavFn A* 全局规划器，适合当前单层二维栅格地图。
 - Regulated Pure Pursuit 局部控制器，带前向碰撞检查，计算量低于采样型复杂控制器。
 - 二维 `ObstacleLayer + InflationLayer`，没有使用 3D voxel layer。
+- 矩形 footprint 覆盖较大的服务机器人，0.70 m 膨胀层让全局路径更早远离墙角。
 - Velocity Smoother 和 Collision Monitor 串在最终速度通道上。
+- `navigate_to_pose_w_replanning_and_recovery.xml` 显式启用重规划、清理代价地图、旋转、
+  等待和后退恢复链。
 - 两套 Nav2 使用相同参数模板，在 launch 时重写各自的 base/odom frame。
 - Nav2 专用 `showroom_nav2.world` 使用 1 倍实时速率，并把 Stage 速度看门狗放宽为
   3 个仿真秒；基础航点演示继续使用 3 倍速。
@@ -96,6 +98,8 @@ route_started
 - [Collision Monitor](https://github.com/ros-navigation/navigation2/blob/main/nav2_collision_monitor/params/collision_monitor_params.yaml)：独立速度安全层示例。
 - [stage_ros2](https://github.com/tuw-robotics/stage_ros2)：Stage 的 ROS 2 话题、TF 和多机器人前缀实现。
 - [Nav2 Simple Commander](https://github.com/ros-navigation/navigation2/blob/jazzy/nav2_simple_commander/nav2_simple_commander/robot_navigator.py)：Jazzy 中通过 Action goal handle 取消当前任务的官方参考。
+- [Nav2 Route Server](https://github.com/ros-navigation/navigation2/blob/main/nav2_route/README.md)：固定场馆语义图、路线计算和路线操作的后续迁移目标。
+- [Nav2 replanning and recovery BT](https://github.com/ros-navigation/navigation2/blob/main/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml)：当前启用的官方恢复树。
 
 ## 阻挡、恢复与双机器人相遇
 
@@ -146,6 +150,9 @@ route_started
 目标；恢复会从实时位置重新提交目标。蓝色机器人收到 `skip_current`、`next_task`、
 `repeat_current`、`skip_task` 或 `visit_only` 后，会在旧 goal 完成取消时原子替换计划，
 不会短暂出现两个控制目标。绿色机器人的新配送计划仍会在忙碌时拒绝，防止覆盖载货任务。
+
+`temporary_visit` 会用新 `mission_id` 原子替换蓝色机器人当前 goal，前往命名展区入口。
+任务管理器保存剩余导览单元和跳过状态，到达、失败或超时后从当前位置重新规划原任务。
 
 下一阶段应补充 Nav2 专用阻挡/恢复遥测，并在两台机器人共享狭窄通道前增加交通预约。
 Gazebo/实机阶段再接 AMCL、SLAM 或传感器融合定位。

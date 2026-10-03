@@ -4,7 +4,7 @@
 import json
 import re
 
-from showroom_plan import PlanError, validate_plan
+from showroom_plan import ALLOWED_TASKS, PlanError, validate_plan
 
 
 COMMAND_INTENTS = {
@@ -24,6 +24,7 @@ COMMAND_INTENTS = {
     'deliver_drink',
     'skip_task',
     'visit_only',
+    'temporary_visit',
 }
 NON_COMMAND_INTENTS = {'ask_status', 'chat'}
 ALLOWED_INTENTS = COMMAND_INTENTS | NON_COMMAND_INTENTS
@@ -53,6 +54,7 @@ DEFAULT_REPLIES = {
     'deliver_drink': '已安排服务机器人把饮料送到指定场馆。',
     'skip_task': '好的，已从后续导览中移除指定场馆。',
     'visit_only': '好的，已按您选择的场馆重新规划导览。',
+    'temporary_visit': '好的，我先前往指定展区，完成后会继续原导览任务。',
     'ask_status': '我已经读取当前任务状态，请查看机器人运行信息。',
     'chat': '我目前可以帮助您开始、暂停或继续导览，也可以安排咖啡服务。',
 }
@@ -181,6 +183,22 @@ def validate_model_result(document):
         if len(normalized_tasks) != len(tasks):
             raise LLMOutputError(f'{intent} 的 tasks 包含空值或重复值')
         result['tasks'] = normalized_tasks
+    if intent == 'temporary_visit':
+        target = str(document.get('target', '')).strip()
+        if target not in ALLOWED_TASKS:
+            raise LLMOutputError('temporary_visit 的 target 必须是有效场馆 ID')
+        result['target'] = target
+        for field, minimum, maximum, default in (
+                ('dwell_sec', 0.0, 120.0, 0.0),
+                ('timeout_sec', 1.0, 600.0, 300.0)):
+            value = document.get(field, default)
+            if (not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                    or not minimum <= float(value) <= maximum):
+                raise LLMOutputError(
+                    f'temporary_visit 的 {field} 必须在 '
+                    f'{minimum:g}..{maximum:g} 秒')
+            result[field] = float(value)
     if intent in ('explain_current', 'explain_more'):
         if not model_supplied_reply:
             raise LLMOutputError(f'{intent} 必须包含基于当前任务的 reply')
@@ -215,4 +233,10 @@ def command_from_result(result):
             'drink': result['drink'], 'target': result['target']})
     if result['intent'] in ('skip_task', 'visit_only'):
         command['tasks'] = result['tasks']
+    if result['intent'] == 'temporary_visit':
+        command.update({
+            'target': result['target'],
+            'dwell_sec': result['dwell_sec'],
+            'timeout_sec': result['timeout_sec'],
+        })
     return command

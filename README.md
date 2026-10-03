@@ -22,6 +22,7 @@ Windows 本地模型服务的 LLM 桥接层，以及两台机器人相互隔离�
 - 受控多步骤计划、顺序执行状态机和小模型多意图修复
 - 语义导航网关与 Dijkstra 路线优化，支持把饮料送到当前展区
 - 可选双机器人 Nav2 栈：导览任务动态重规划，配送任务分段执行，并支持暂停、自动恢复、取消和任务替换
+- 有时限的临时场馆导航：到达或超时后恢复保存的原导览任务
 - 可选的本地 LLM 桥接层，支持 Qwen 的 Ollama 和 OpenAI 兼容 HTTP 接口
 - 本地 Whisper 中文语音识别和 Piper 中文语音合成，支持半双工防回声
 - 两台机器人共享全馆语义路网，支持任意展区饮料配送与服务专用最短路径
@@ -424,8 +425,8 @@ python3 tools/generate_showroom_assets.py
 python3 tools/validate_project.py
 ```
 
-校验器会检查 Python、YAML、XML、Stage include、PGM 尺寸以及机器人路线的
-0.42 m 最小几何净空。
+校验器会检查 Python、YAML、XML、Stage include、PGM 尺寸、生成路线的安全净空，
+以及语义图 connector 的 0.44 m 净空。
 
 ## 测试
 
@@ -437,13 +438,12 @@ colcon test-result --verbose
 
 ## 当前边界
 
-- 航点跟随器用于验证地图和 ROS 接口，不包含全局规划、恢复行为或机器人互让。
-- 激光急停后不会自动重规划；正式导航应由 Nav2 负责。
+- 基础 Stage 航点后端只用于验证地图和 ROS 接口；全局规划、激光避障和恢复由可选 Nav2 配置负责。
 - 当前任务协议使用 `std_msgs/String` 承载 JSON；稳定后应提取为独立接口包和 ROS Action。
-- 当前可自由组合白名单高层 action；任意地点导航要在接入 Nav2 全局规划后开放。
+- Nav2 允许临时前往配置中的命名场馆；LLM 仍不能生成任意坐标。
 - 语音层已接入本地 Whisper ASR 和 Piper TTS；VMware 必须把真实麦克风输入正确传给 Ubuntu。
 - 隐藏通道目前是静态开口，动态门需要单独的门控节点和 Stage 模型支持。
-- Stage 不使用 URDF；接入 Nav2 和 RViz 时需要补充机器人描述、footprint 与代价地图参数。
+- Stage 不使用 URDF；Nav2 当前使用手工配置的矩形 footprint，迁移到 Gazebo/实机时应从机器人描述统一生成。
 
 ## VMware 显示问题
 

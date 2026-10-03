@@ -18,7 +18,8 @@ def semantic_targets_from_plan(document):
     if not isinstance(waypoints, list) or not 1 <= len(waypoints) <= 256:
         raise ValueError('Nav2 plan needs 1..256 waypoints')
     request_type = document.get('request_type')
-    if request_type not in ('delivery', 'guide_itinerary'):
+    if request_type not in (
+            'delivery', 'guide_itinerary', 'temporary_visit'):
         raise ValueError('Unsupported Nav2 semantic plan type')
     targets = []
     for item in waypoints:
@@ -151,6 +152,9 @@ class GraphRoutePlanner:
                 'allowed_robots': tuple(
                     str(value) for value in
                     connector.get('allowed_robots') or []),
+                'allowed_request_types': tuple(
+                    str(value) for value in
+                    connector.get('allowed_request_types') or []),
             }
             self._add_edge(
                 start, goal, metadata,
@@ -231,6 +235,12 @@ class GraphRoutePlanner:
                 allowed = metadata.get('allowed_robots') or ()
                 if allowed and (context or {}).get('robot_id') not in allowed:
                     continue
+                allowed_requests = (
+                    metadata.get('allowed_request_types') or ())
+                if (allowed_requests
+                        and (context or {}).get('request_type')
+                        not in allowed_requests):
+                    continue
                 edge_cost = self.cost_model.edge_cost(
                     edge_distance, metadata, context=context)
                 candidate = cost + edge_cost
@@ -283,6 +293,7 @@ class GraphRoutePlanner:
         target = self.target_for_task(task_id)
         planning_context = dict(context or {})
         planning_context['robot_id'] = 'robot_1'
+        planning_context['request_type'] = 'delivery'
         return self.plan(
             [start or self.standby, self.pickup, target, self.standby],
             context=planning_context,
@@ -372,7 +383,10 @@ def build_guide_plan(planner, request, task_catalog):
                 stop_metadata.append((unit.task_id, phase))
             elif stop_metadata:
                 stop_metadata[-1] = (unit.task_id, phase)
-    route = planner.plan(stops, context={'robot_id': 'robot_0'})
+    route = planner.plan(stops, context={
+        'robot_id': 'robot_0',
+        'request_type': 'guide_itinerary',
+    })
     waypoints = [dict(item) for item in route.waypoints]
     for item in waypoints:
         item['mission_id'] = mission_id
@@ -397,6 +411,57 @@ def build_guide_plan(planner, request, task_catalog):
         'request_type': 'guide_itinerary',
         'task_ids': [unit.task_id for unit in units],
         'resume_task_id': resume_task_id or None,
+        'frame_id': planner.frame_id,
+        'cost_profile': route.cost_profile,
+        'distance_m': route.distance_m,
+        'cost': route.cost,
+        'nodes': nodes,
+        'waypoints': waypoints,
+    }
+
+
+def build_temporary_visit_plan(planner, request, task_catalog):
+    """Route the guide to one task entrance without replacing its itinerary."""
+    if not isinstance(request, dict):
+        raise NavigationError('Navigation request must be an object')
+    if request.get('robot_id') != 'robot_0':
+        raise NavigationError('Temporary visits are assigned to robot_0')
+    mission_id = str(request.get('mission_id', '')).strip()
+    start = str(request.get('start', '')).strip()
+    target_task = str(request.get('target_task', '')).strip()
+    if not mission_id or not start or not target_task:
+        raise NavigationError(
+            'Temporary visit needs mission_id, start, and target_task')
+    try:
+        unit = task_catalog.resolve(target_task)
+    except (ValueError, TypeError) as exception:
+        raise NavigationError(str(exception)) from exception
+    destination = unit.start_waypoint
+    route = planner.plan(
+        [start, destination], context={
+            'robot_id': 'robot_0',
+            'request_type': 'temporary_visit',
+        })
+    nodes = list(route.nodes)
+    waypoints = [dict(item) for item in route.waypoints]
+    if nodes and nodes[0] == start:
+        nodes = nodes[1:]
+        waypoints = waypoints[1:]
+    if not waypoints:
+        raise NavigationError('Robot is already at the temporary destination')
+    for item in waypoints:
+        item['mission_id'] = mission_id
+    waypoints[-1].update({
+        'task_id': unit.task_id,
+        'task_phase': 'temporary_destination',
+    })
+    return {
+        'type': 'navigation_plan',
+        'robot_id': 'robot_0',
+        'route': str(request.get('route', 'guide_temporary_visit')),
+        'mission_id': mission_id,
+        'request_type': 'temporary_visit',
+        'target_task': unit.task_id,
         'frame_id': planner.frame_id,
         'cost_profile': route.cost_profile,
         'distance_m': route.distance_m,

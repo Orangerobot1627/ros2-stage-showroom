@@ -24,7 +24,7 @@ NAV2_LIFECYCLE_NODES = [
 ]
 
 
-def rewritten_robot_params(params_file, map_file, robot_id, pose):
+def rewritten_robot_params(params_file, map_file, bt_file, robot_id, pose):
     """Bind the shared Nav2 template to one Stage robot's TF frames."""
     return ParameterFile(
         RewrittenYaml(
@@ -35,6 +35,7 @@ def rewritten_robot_params(params_file, map_file, robot_id, pose):
                 'base_frame_id': f'{robot_id}/base_link',
                 'odom_frame_id': f'{robot_id}/odom',
                 'robot_base_frame': f'{robot_id}/base_link',
+                'default_nav_to_pose_bt_xml': bt_file,
                 'local_frame': f'{robot_id}/odom',
                 'local_costmap.local_costmap.ros__parameters.global_frame': (
                     f'{robot_id}/odom'),
@@ -110,10 +111,11 @@ def nav2_components(robot_id, robot_params):
     ]
 
 
-def robot_nav2_actions(robot_id, pose, params_file, map_file, ros_domain_id):
+def robot_nav2_actions(robot_id, pose, params_file, map_file, bt_file,
+                       ros_domain_id):
     """Create deterministic Stage localization and one Nav2 container."""
     robot_params = rewritten_robot_params(
-        params_file, map_file, robot_id, pose)
+        params_file, map_file, bt_file, robot_id, pose)
     environment = {
         'ROS_AUTOMATIC_DISCOVERY_RANGE': 'LOCALHOST',
         'ROS_DOMAIN_ID': ros_domain_id,
@@ -157,6 +159,9 @@ def generate_launch_description():
     map_file = os.path.join(share, 'map', 'showroom_final.yaml')
     params_file = os.path.join(share, 'config', 'nav2_stage_params.yaml')
     world_file = os.path.join(share, 'world', 'showroom_nav2.world')
+    bt_file = os.path.join(
+        get_package_share_directory('nav2_bt_navigator'),
+        'behavior_trees', 'navigate_to_pose_w_replanning_and_recovery.xml')
 
     enable_gui = LaunchConfiguration('enable_gui')
     business_auto_start = LaunchConfiguration('business_auto_start')
@@ -198,5 +203,5 @@ def generate_launch_description():
     # Fixed map->odom transforms keep accelerated simulation deterministic.
     for robot_id, pose in robots.items():
         actions.extend(robot_nav2_actions(
-            robot_id, pose, params_file, map_file, ros_domain_id))
+            robot_id, pose, params_file, map_file, bt_file, ros_domain_id))
     return LaunchDescription(actions)

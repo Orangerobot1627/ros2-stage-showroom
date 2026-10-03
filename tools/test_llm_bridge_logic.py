@@ -141,6 +141,24 @@ def main():
         'action': 'bypass_obstacle',
     }
     semantic = normalize_semantic_result(
+        {'intent': 'start_tour'}, '带我去时空隧道停留30秒')
+    assert command_from_result(validate_model_result(semantic)) == {
+        'intent': 'temporary_visit',
+        'target': 'time_tunnel',
+        'dwell_sec': 30.0,
+        'timeout_sec': 300.0,
+    }
+    semantic = normalize_semantic_result(
+        {'intent': 'ask_status'}, '机器人到时空隧道了吗')
+    assert validate_model_result(semantic)['intent'] == 'ask_status'
+    semantic = normalize_semantic_result(
+        {'intent': 'chat'}, '时空隧道不去了')
+    assert validate_model_result(semantic) == {
+        'intent': 'skip_task',
+        'reply': '好的，已从后续导览中移除指定场馆。',
+        'tasks': ['time_tunnel'],
+    }
+    semantic = normalize_semantic_result(
         {'intent': 'chat'}, '我只看视觉馆，并送一杯咖啡到视觉馆')
     assert validate_model_result(semantic)['plan'] == [
         {'action': 'visit_only', 'tasks': ['vision_hall']},

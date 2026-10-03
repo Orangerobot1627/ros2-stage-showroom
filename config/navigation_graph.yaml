@@ -18,12 +18,16 @@ connectors:
   # Map-validated transit shortcuts. The service robot uses these corridors to
   # avoid circling every display island while delivering to a named hall. The
   # guide route keeps the complete exhibit loops.
-  - {from: coffee_south_east, to: history_panel_3, allowed_robots: [robot_1]}
-  - {from: vision_hall_entry, to: vision_loop_close, allowed_robots: [robot_1]}
-  - {from: vision_loop_close, to: vision_exit, allowed_robots: [robot_1]}
-  - {from: robotics_entry_approach, to: robotics_loop_close, allowed_robots: [robot_1]}
-  - {from: robotics_entry_approach, to: hidden_door_approach, allowed_robots: [robot_1]}
-  - {from: dance_inside, to: dance_exit_approach, allowed_robots: [robot_1]}
+  - {from: coffee_south_east, to: history_panel_3, allowed_robots: [robot_0, robot_1], allowed_request_types: [delivery, temporary_visit]}
+  - {from: vision_hall_entry, to: vision_loop_close, allowed_robots: [robot_0, robot_1], allowed_request_types: [delivery, temporary_visit]}
+  - {from: vision_loop_close, to: vision_exit, allowed_robots: [robot_0, robot_1], allowed_request_types: [delivery, temporary_visit]}
+  - {from: robotics_entry_approach, to: robotics_loop_close, allowed_robots: [robot_0, robot_1], allowed_request_types: [delivery, temporary_visit]}
+  - {from: robotics_entry_approach, to: hidden_door_approach, allowed_robots: [robot_0, robot_1], allowed_request_types: [delivery, temporary_visit]}
+  - {from: dance_inside, to: dance_exit_approach, allowed_robots: [robot_0, robot_1], allowed_request_types: [delivery, temporary_visit]}
+
+  # The open central aisle lets a visitor-requested temporary guide mission
+  # bypass exhibit loops. Default guide_itinerary requests cannot use it.
+  - {from: stairs_clearance, to: robotics_entry_approach, allowed_robots: [robot_0], allowed_request_types: [temporary_visit]}
 
 service:
   standby: coffee_robot_standby

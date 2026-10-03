@@ -38,7 +38,7 @@ def normalize_semantic_result(document, user_text):
     selection_request = any(
         word in text for word in ('只看', '只参观', '只去', '只逛'))
     skip_request = any(word in text for word in (
-        '不看', '不参观', '跳过', '略过', '取消参观'))
+        '不看', '不参观', '不去', '别去', '跳过', '略过', '取消参观'))
     drink_request = any(word in text for word in ('饮料', '咖啡', '水', '果汁'))
     delivery_request = any(word in text for word in ('送', '拿', '来一杯', '给我'))
     drink = 'juice' if '果汁' in text else 'water' if re.search(
@@ -76,6 +76,23 @@ def normalize_semantic_result(document, user_text):
         return {
             'intent': 'deliver_drink', 'drink': drink,
             'target': tasks[0], 'reply': reply}
+    travel_request = any(word in text for word in (
+        '去', '前往', '带我去', '带我到', '过去', '导航到')) and not any(
+            word in text for word in ('到了吗', '到哪', '怎么去', '如何去'))
+    if tasks and travel_request:
+        result = {
+            'intent': 'temporary_visit',
+            'target': tasks[0],
+            'reply': reply,
+        }
+        duration_match = re.search(r'(\d+(?:\.\d+)?)\s*秒', text)
+        stay_request = any(word in text for word in (
+            '多待', '多呆', '停留', '待一会', '呆一会', '多看一会'))
+        if duration_match:
+            result['dwell_sec'] = float(duration_match.group(1))
+        elif stay_request:
+            result['dwell_sec'] = 20.0
+        return result
     return document
 
 
@@ -194,6 +211,7 @@ def build_messages(user_text, business=None, monitor=None, knowledge=None):
 - next_task：正常结束当前内容并进入下一个任务单元
 - skip_task：跳过一个或多个指定场馆，tasks 是稳定场馆 ID 数组
 - visit_only：只参观指定场馆，tasks 是稳定场馆 ID 数组
+- temporary_visit：临时前往 target 场馆，可带 dwell_sec 停留时间。到达或超时后恢复原导览
 - explain_current：讲解 current_task，必须用 summary 生成 reply
 - explain_more：追问当前内容，必须用 detail 生成更详细的 reply
 - execute_plan：一句话同时包含多个任务时使用。plan 是 2..8 个 action 的数组
@@ -202,6 +220,7 @@ def build_messages(user_text, business=None, monitor=None, knowledge=None):
   - deliver_drink：drink 为 coffee、water、juice 或 drink；target 默认 current_task
   - skip_current、repeat_current、next_task
   - skip_task、visit_only：带 tasks 场馆 ID 数组
+  - temporary_visit：带 target，可带 dwell_sec 和 timeout_sec
   - bypass_obstacle：robot 为 guide、coffee 或 all
   - announce：必须带 text
 - ask_status：询问机器人位置、进度、障碍或任务状态
@@ -216,6 +235,7 @@ def build_messages(user_text, business=None, monitor=None, knowledge=None):
 跳过当前展区：{{"intent":"skip_current"}}
 跳过指定展区：{{"intent":"skip_task","tasks":["robotics_hall"]}}
 只看指定展区：{{"intent":"visit_only","tasks":["vision_hall","dance_hall"]}}
+临时前往并停留：{{"intent":"temporary_visit","target":"time_tunnel","dwell_sec":20}}
 送到指定场馆：{{"intent":"deliver_drink","drink":"coffee","target":"robotics_hall"}}
 绕过当前障碍：{{"intent":"robot_action","robot":"guide","action":"bypass_obstacle"}}
 重新执行当前展区：{{"intent":"repeat_current"}}

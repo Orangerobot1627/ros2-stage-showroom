@@ -9,6 +9,14 @@ override:
   max_duration_sec: 120.0
   auto_resume: true
 
+# A visitor may temporarily send the guide to one named area. The safety
+# timeout covers travel; dwell_sec is supplied by the command and begins only
+# after arrival. In both cases the suspended guide itinerary is restored.
+temporary_navigation:
+  default_timeout_sec: 300.0
+  max_timeout_sec: 600.0
+  max_dwell_sec: 120.0
+
 robots:
   guide:
     robot_id: robot_0
@@ -50,3 +58,8 @@ actions:
     allowed_robots: [guide, coffee, all]
     completion: local_planner_rejoined
     fallback: stop
+  temporary_visit:
+    display_name: 临时前往指定展区
+    allowed_robots: [guide]
+    completion: route_completed_or_timeout
+    fallback: resume_default

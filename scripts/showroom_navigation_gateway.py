@@ -12,6 +12,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from showroom_navigation import (
     build_delivery_plan,
     build_guide_plan,
+    build_temporary_visit_plan,
     GraphRoutePlanner,
     NavigationError,
 )
@@ -86,6 +87,9 @@ class ShowroomNavigationGateway(Node):
                 plan = build_delivery_plan(self.planner, request)
             elif request_type == 'guide_itinerary':
                 plan = build_guide_plan(
+                    self.planner, request, self.task_catalog)
+            elif request_type == 'temporary_visit':
+                plan = build_temporary_visit_plan(
                     self.planner, request, self.task_catalog)
             else:
                 raise NavigationError('Unsupported navigation request type')

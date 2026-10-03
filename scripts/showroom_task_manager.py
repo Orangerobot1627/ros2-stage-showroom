@@ -15,6 +15,7 @@ from showroom_action_policy import (
     ActionPolicy,
     ActionPolicyError,
     OverrideLeaseBook,
+    TemporaryMissionLease,
 )
 from showroom_business_logic import BusinessLogic
 from showroom_plan import (
@@ -86,6 +87,9 @@ class ShowroomTaskManager(Node):
             TaskUnitCatalog.from_files(task_path, route_path))
         self.plan_executor = SequentialPlanExecutor()
         self.plan_sequence = 0
+        self.temporary_guide = None
+        self.guide_restore_mission_id = None
+        self.guide_restore_resume_task_id = None
         self.robot_locations = {
             'robot_0': 'entrance',
             'robot_1': 'coffee_robot_standby',
@@ -219,6 +223,15 @@ class ShowroomTaskManager(Node):
             'override_time_source': 'steady_wall_clock',
             'current_task': self.task_units.snapshot(),
             'active_plan': self.plan_executor.snapshot(),
+            'temporary_navigation': (
+                self.temporary_guide.snapshot(time.monotonic())
+                if self.temporary_guide is not None else None),
+            'guide_restore_transit': (
+                {
+                    'mission_id': self.guide_restore_mission_id,
+                    'resume_task_id': self.guide_restore_resume_task_id,
+                }
+                if self.guide_restore_mission_id is not None else None),
         })
         status.update({'type': 'business_status', 'reason': reason})
         self.publish_json(self.status_publisher, status)
@@ -328,6 +341,8 @@ class ShowroomTaskManager(Node):
 
     def execute_task_edit(self, intent):
         """Edit the guide route at semantic task boundaries."""
+        if self.guide_restore_mission_id is not None:
+            raise TaskUnitError('正在返回被暂停的主任务，暂不能编辑导览单元')
         guide_state = self.logic.state_for('robot_0')
         if guide_state not in (
                 'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
@@ -429,6 +444,109 @@ class ShowroomTaskManager(Node):
             'resume_task_id': resume_task_id,
         }
 
+    def remaining_guide_task_ids(self):
+        """Return the suspended itinerary from the current task onward."""
+        current = self.task_units.current
+        itinerary = list(self.task_units.itinerary or [
+            unit.task_id for unit in self.task_units.catalog.units])
+        if current is None:
+            return itinerary, itinerary[0]
+        current_catalog_index = self.task_units.catalog.units.index(current)
+        remaining = [
+            task_id for task_id in itinerary
+            if self.task_units.catalog.units.index(
+                self.task_units.catalog.unit_for_id(task_id))
+            >= current_catalog_index
+        ]
+        if not remaining:
+            remaining = [current.task_id]
+        resume_task_id = (
+            current.task_id if current.task_id in remaining
+            else remaining[0])
+        return remaining, resume_task_id
+
+    def start_temporary_visit(self, target, dwell_sec=None,
+                              timeout_sec=None, mission_id=None):
+        """Suspend the guide itinerary and dispatch one bounded visit."""
+        self.action_policy.validate_action('temporary_visit', 'guide')
+        if self.navigation_backend != 'nav2':
+            raise TaskUnitError('临时场馆导航当前需要 Nav2 后端')
+        if self.temporary_guide is not None:
+            raise TaskUnitError('已有临时导航任务正在执行')
+        if self.guide_restore_mission_id is not None:
+            raise TaskUnitError('正在返回被暂停的主任务，请稍后再发临时导航')
+        if self.logic.state_for('robot_0') not in (
+                'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
+                'PAUSED', 'BLOCKED'):
+            raise TaskUnitError('蓝色导览机器人当前没有可暂停的主任务')
+        unit = self.task_units.catalog.resolve(target)
+        base_task_ids, resume_task_id = self.remaining_guide_task_ids()
+        base_state = self.logic.guide_state
+        if base_state == 'PAUSED':
+            base_state = self.logic.paused_from.pop('robot_0', 'TOURING')
+        elif base_state == 'BLOCKED':
+            base_state = self.logic.blocked_from.pop('robot_0', 'TOURING')
+        self.override_leases.release('robot_0')
+        self.logic.guide_state = 'TEMPORARY_NAVIGATION'
+        now = time.monotonic()
+        mission_id = mission_id or self.next_mission_id('temporary-guide')
+        timeout = self.action_policy.navigation_timeout(timeout_sec)
+        dwell = self.action_policy.dwell_duration(dwell_sec)
+        self.temporary_guide = TemporaryMissionLease(
+            mission_id=mission_id,
+            target_task_id=unit.task_id,
+            base_task_ids=tuple(base_task_ids),
+            skipped_task_ids=tuple(self.task_units.skipped_task_ids),
+            resume_task_id=resume_task_id,
+            base_state=base_state,
+            started_at=now,
+            safety_deadline=now + timeout,
+            dwell_sec=dwell,
+        )
+        effect = {
+            'type': 'navigation_request',
+            'request_type': 'temporary_visit',
+            'robot_id': 'robot_0',
+            'route': self.logic.route_for('robot_0'),
+            'mission_id': mission_id,
+            'start': self.robot_locations.get('robot_0', 'entrance'),
+            'target_task': unit.task_id,
+        }
+        return effect, unit
+
+    def restore_temporary_guide(self, reason):
+        """Restore the exact suspended itinerary after a temporary visit."""
+        lease = self.temporary_guide
+        if lease is None:
+            return []
+        self.temporary_guide = None
+        self.override_leases.release('robot_0')
+        self.logic.paused_from.pop('robot_0', None)
+        self.logic.blocked_from.pop('robot_0', None)
+        self.logic.guide_state = lease.base_state
+        self.task_units.set_itinerary(
+            list(lease.base_task_ids),
+            skipped=list(lease.skipped_task_ids),
+            last_edit=f'temporary_restore:{reason}')
+        restore_effect = self.guide_navigation_effect(
+            list(lease.base_task_ids),
+            resume_task_id=lease.resume_task_id)
+        self.guide_restore_mission_id = restore_effect['mission_id']
+        self.guide_restore_resume_task_id = lease.resume_task_id
+        effects = [restore_effect]
+        restored_event = {
+            'type': 'temporary_visit_restored',
+            'robot_id': 'robot_0',
+            'mission_id': lease.mission_id,
+            'reason': reason,
+        }
+        if self.plan_executor.observe_event(restored_event):
+            effects.extend(self.advance_plan())
+        self.get_logger().info(
+            f'Temporary mission {lease.mission_id} ended ({reason}); '
+            f'restored guide tasks {list(lease.base_task_ids)}')
+        return effects
+
     def default_guide_effect(self):
         """Convert the legacy guide start into a semantic Nav2 itinerary."""
         return self.guide_navigation_effect([
@@ -436,6 +554,8 @@ class ShowroomTaskManager(Node):
 
     def execute_task_selection(self, intent, requested_tasks):
         """Replan the guide over selected task units on the shared graph."""
+        if self.guide_restore_mission_id is not None:
+            raise TaskUnitError('正在返回被暂停的主任务，暂不能重规划导览')
         if self.logic.state_for('robot_0') not in (
                 'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
                 'PAUSED', 'BLOCKED'):
@@ -510,6 +630,19 @@ class ShowroomTaskManager(Node):
             effects, detail = self.execute_task_selection(
                 action_name, action['tasks'])
             return effects, detail, None
+        if action_name == 'temporary_visit':
+            mission_id = (
+                f'{self.plan_executor.plan_id}-step-'
+                f'{self.plan_executor.current_index + 1}')
+            effect, unit = self.start_temporary_visit(
+                action['target'], dwell_sec=action['dwell_sec'],
+                timeout_sec=action['timeout_sec'], mission_id=mission_id)
+            return [effect], (
+                f'temporary visit to {unit.display_name}'), {
+                    'type': 'temporary_visit_restored',
+                    'robot_id': 'robot_0',
+                    'mission_id': mission_id,
+                }
         if action_name == 'bypass_obstacle':
             effects, detail = self.execute_robot_action({
                 'robot': action['robot'], 'action': 'bypass_obstacle'})
@@ -556,6 +689,16 @@ class ShowroomTaskManager(Node):
                         'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
                         'PAUSED', 'BLOCKED'):
                     raise PlanError('当前没有可重规划的导览任务')
+            elif action_name == 'temporary_visit':
+                self.task_units.catalog.resolve(action['target'])
+                if self.temporary_guide is not None:
+                    raise PlanError('已有临时导航任务正在执行')
+                if self.guide_restore_mission_id is not None:
+                    raise PlanError('正在返回被暂停的主任务')
+                if self.logic.state_for('robot_0') not in (
+                        'RECEPTION', 'TOURING', 'GOING_TO_LOUNGE',
+                        'PAUSED', 'BLOCKED'):
+                    raise PlanError('当前没有可暂停的导览任务')
             elif action_name == 'bypass_obstacle':
                 self.action_policy.validate_action(
                     'bypass_obstacle', action['robot'])
@@ -622,6 +765,15 @@ class ShowroomTaskManager(Node):
         elif intent in ('skip_task', 'visit_only'):
             effects, detail = self.execute_task_selection(
                 intent, document.get('tasks') or [])
+        elif intent == 'temporary_visit':
+            effect, unit = self.start_temporary_visit(
+                document.get('target'),
+                dwell_sec=document.get('dwell_sec'),
+                timeout_sec=document.get('timeout_sec'))
+            effects = [effect]
+            detail = (
+                f'temporary visit to {unit.display_name}; '
+                'the suspended itinerary will resume automatically')
         elif intent == 'deliver_drink':
             effect, unit = self.delivery_effect(
                 document.get('target', 'current_task'),
@@ -639,6 +791,9 @@ class ShowroomTaskManager(Node):
         else:
             if intent in ('cancel_all', 'reset'):
                 self.override_leases.clear()
+                self.temporary_guide = None
+                self.guide_restore_mission_id = None
+                self.guide_restore_resume_task_id = None
                 if self.plan_executor.active:
                     self.plan_executor.cancel(intent)
             effects = self.logic.handle_command(document)
@@ -652,9 +807,16 @@ class ShowroomTaskManager(Node):
 
     def expire_overrides(self):
         """Resume defaults after a wall-clock human-control lease expires."""
+        now = time.monotonic()
+        if self.temporary_guide is not None:
+            reason = self.temporary_guide.due(now)
+            if reason is not None:
+                effects = self.restore_temporary_guide(reason)
+                self.apply_effects(effects)
+                self.publish_status(f'temporary_navigation:{reason}')
         if not self.action_policy.auto_resume:
             return
-        expired = self.override_leases.expired(time.monotonic())
+        expired = self.override_leases.expired(now)
         if not expired:
             return
         effects = []
@@ -694,6 +856,58 @@ class ShowroomTaskManager(Node):
                 self.robot_locations[robot_id] = document['label']
             if event_type in ('route_cancelled', 'route_completed'):
                 self.override_leases.release(robot_id)
+            is_temporary = (
+                self.temporary_guide is not None
+                and robot_id == 'robot_0'
+                and document.get('mission_id')
+                == self.temporary_guide.mission_id)
+            if is_temporary:
+                effects = []
+                if event_type in ('blocked', 'obstacle_cleared'):
+                    effects.extend(self.logic.handle_event(document))
+                if event_type == 'route_completed':
+                    if self.temporary_guide.arrive(time.monotonic()):
+                        effects.extend(self.restore_temporary_guide(
+                            'destination_reached'))
+                elif event_type in (
+                        'route_failed', 'route_cancelled',
+                        'route_command_rejected'):
+                    effects.extend(self.restore_temporary_guide(
+                        document.get('reason', event_type)))
+                self.apply_effects(effects)
+                self.publish_status(
+                    f'temporary_event:{event_type}')
+                return
+            is_restore_transit = (
+                self.guide_restore_mission_id is not None
+                and robot_id == 'robot_0'
+                and document.get('mission_id')
+                == self.guide_restore_mission_id)
+            if is_restore_transit:
+                reached_resume = (
+                    event_type == 'waypoint_reached'
+                    and document.get('task_id')
+                    == self.guide_restore_resume_task_id
+                    and document.get('task_phase') == 'task_start')
+                if reached_resume:
+                    self.guide_restore_mission_id = None
+                    self.guide_restore_resume_task_id = None
+                    self.get_logger().info(
+                        'Guide reached the suspended task boundary; '
+                        'normal task progress tracking resumed')
+                elif event_type in (
+                        'route_failed', 'route_cancelled',
+                        'route_command_rejected', 'route_completed'):
+                    self.guide_restore_mission_id = None
+                    self.guide_restore_resume_task_id = None
+                else:
+                    effects = []
+                    if event_type in ('blocked', 'obstacle_cleared'):
+                        effects.extend(self.logic.handle_event(document))
+                    self.apply_effects(effects)
+                    self.publish_status(
+                        f'guide_restore_transit:{event_type}')
+                    return
             if robot_id == 'robot_0':
                 if event_type == 'route_started':
                     if self.task_units.current is None:
@@ -738,6 +952,20 @@ class ShowroomTaskManager(Node):
         """Observe route planning acceptance or rejection."""
         try:
             document = self.parse_message(message)
+            if (document.get('type') == 'navigation_rejected'
+                    and self.temporary_guide is not None
+                    and document.get('mission_id')
+                    == self.temporary_guide.mission_id):
+                effects = self.restore_temporary_guide(
+                    document.get('reason', 'navigation rejected'))
+                self.apply_effects(effects)
+            if (document.get('type') == 'navigation_rejected'
+                    and self.guide_restore_mission_id is not None
+                    and document.get('mission_id')
+                    == self.guide_restore_mission_id):
+                self.guide_restore_mission_id = None
+                self.guide_restore_resume_task_id = None
+                self.logic.guide_state = 'FAILED'
             if (document.get('type') == 'navigation_rejected'
                     and self.plan_executor.active
                     and document.get('mission_id')

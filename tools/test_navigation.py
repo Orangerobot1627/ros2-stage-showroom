@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from showroom_navigation import (  # noqa: E402,I100
     build_delivery_plan,
     build_guide_plan,
+    build_temporary_visit_plan,
     GraphRoutePlanner,
     semantic_targets_from_plan,
 )
@@ -129,6 +130,30 @@ def main():
     }, catalog)
     assert resumed['nodes'][0] != 'vision_display_north'
     assert resumed['nodes'].count('vision_hall_entry') == 0
+    temporary = build_temporary_visit_plan(planner, {
+        'robot_id': 'robot_0',
+        'mission_id': 'temporary-1',
+        'start': 'vision_display_north',
+        'target_task': 'time_tunnel',
+    }, catalog)
+    assert temporary['request_type'] == 'temporary_visit'
+    assert temporary['target_task'] == 'time_tunnel'
+    assert temporary['nodes'][0] != 'vision_display_north'
+    assert temporary['nodes'][-1] == 'hidden_door_approach'
+    assert len(temporary['nodes']) > 3
+    assert 'vision_display_west' not in temporary['nodes']
+    assert 'robotics_inside' not in temporary['nodes']
+    entrance_temporary = build_temporary_visit_plan(planner, {
+        'robot_id': 'robot_0',
+        'mission_id': 'temporary-entrance',
+        'start': 'stairs_clearance',
+        'target_task': 'time_tunnel',
+    }, catalog)
+    assert entrance_temporary['nodes'] == [
+        'robotics_entry_approach', 'hidden_door_approach']
+    temporary_targets = semantic_targets_from_plan(temporary)
+    assert temporary_targets[-1]['task_id'] == 'time_tunnel'
+    assert temporary_targets[-1]['task_phase'] == 'temporary_destination'
     print(f'Navigation graph delivery routes: OK {distances}')
 
 

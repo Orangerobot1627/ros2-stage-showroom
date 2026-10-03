@@ -24,6 +24,7 @@ ALLOWED_ACTIONS = {
     'announce',
     'skip_task',
     'visit_only',
+    'temporary_visit',
     'bypass_obstacle',
 }
 ALLOWED_ROBOTS = {'guide', 'coffee', 'all'}
@@ -90,6 +91,28 @@ def validate_plan(actions, default_pause_sec=20.0, max_steps=8):
             if unknown:
                 raise PlanError(f'plan[{index}] 包含未知场馆：{unknown}')
             result['tasks'] = tasks
+        elif action == 'temporary_visit':
+            target = str(item.get('target', '')).strip()
+            if target not in ALLOWED_TASKS:
+                raise PlanError(
+                    f'plan[{index}].target 必须是有效场馆 ID')
+            dwell = item.get('dwell_sec', 0.0)
+            timeout = item.get('timeout_sec', 300.0)
+            if (not isinstance(dwell, (int, float))
+                    or isinstance(dwell, bool)
+                    or not 0.0 <= float(dwell) <= 120.0):
+                raise PlanError(
+                    f'plan[{index}].dwell_sec 必须在 0..120 秒')
+            if (not isinstance(timeout, (int, float))
+                    or isinstance(timeout, bool)
+                    or not 1.0 <= float(timeout) <= 600.0):
+                raise PlanError(
+                    f'plan[{index}].timeout_sec 必须在 1..600 秒')
+            result.update({
+                'target': target,
+                'dwell_sec': float(dwell),
+                'timeout_sec': float(timeout),
+            })
         elif action == 'bypass_obstacle':
             robot = str(item.get('robot', 'guide')).strip().lower()
             if robot not in ALLOWED_ROBOTS:

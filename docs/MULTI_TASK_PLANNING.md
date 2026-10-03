@@ -53,6 +53,7 @@ The first version accepts up to eight actions:
 - `pause` and `resume`
 - `deliver_drink`
 - `skip_current`, `repeat_current`, `next_task`
+- `skip_task`, `visit_only`, `temporary_visit`
 - `announce`
 
 The model cannot add arbitrary ROS topics, shell commands, coordinates or
@@ -70,7 +71,7 @@ Dijkstra search and an injectable edge-cost interface.
 The default cost is geometric distance. Runtime context can add edge penalties,
 which is the extension point for congestion, temporary closures, battery cost
 or robot-priority rules. Every connector is checked against the generated map
-with 0.42 m clearance during project validation.
+with 0.44 m clearance during project validation.
 
 For a delivery, the gateway optimizes these ordered legs:
 
